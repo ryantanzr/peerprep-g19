@@ -2,3 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic
 motor
+pytest
+pytest-asyncio
+httpx
+anyio
