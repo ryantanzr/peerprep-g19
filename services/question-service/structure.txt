@@ -1,0 +1,5 @@
+. ├── docker-compose.yml 
+  ├── Dockerfile
+  ├── requirements.txt
+  ├── main.py          # FastAPI Application (Producer)
+  └── worker.py       # RabbitMQ Consumer (Processor)
