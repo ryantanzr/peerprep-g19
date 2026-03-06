@@ -1,0 +1,7 @@
+services/user-service/node_modules/
+services/user-service/.env
+services/user-service/.env.*
+services/user-service/npm-debug.log*
+services/user-service/.DS_Store
+services/user-service/coverage/
+services/user-service/dist/
