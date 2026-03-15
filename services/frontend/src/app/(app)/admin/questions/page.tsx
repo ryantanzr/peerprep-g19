@@ -23,24 +23,30 @@ const DIFFICULTY_STYLES: Record<Difficulty, { bar: string; badge: string; text: 
 export default function AdminQuestionsPage() {
   const { toast } = useToast();
 
+  // — data —
   const [questions, setQuestions] = useState<Question[]>([]);
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
 
+  // — delete —
   const [deleteTarget, setDeleteTarget] = useState<Question | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
 
+  // — filters —
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState<Difficulty | "All">("All");
   const [topicFilter, setTopicFilter] = useState<string>("All");
 
-  // Debounce search
+  // Reset to page 1 whenever a filter changes
+  useEffect(() => { setPage(1); }, [difficultyFilter, topicFilter]);
+
+  // Debounce search — also reset to page 1 so results always show from the top
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    const t = setTimeout(() => { setDebouncedQuery(searchQuery); setPage(1); }, 300);
     return () => clearTimeout(t);
   }, [searchQuery]);
 
@@ -60,9 +66,13 @@ export default function AdminQuestionsPage() {
     return counts;
   }, [allQuestions]);
 
-  // Client-side filter: title + difficulty + topic
-  const filteredQuestions = useMemo(() => {
-    return questions.filter((q) => {
+  // Client-side filter: run over the FULL bank (allQuestions) so search isn't
+  // limited to the current page. Falls back to the paginated slice while
+  // allQuestions is still loading.
+  const sourceForFilter = allQuestions.length > 0 ? allQuestions : questions;
+
+  const allFilteredQuestions = useMemo(() => {
+    return sourceForFilter.filter((q) => {
       if (debouncedQuery.trim() && !q.title.toLowerCase().includes(debouncedQuery.toLowerCase()))
         return false;
       if (difficultyFilter !== "All" && q.difficulty !== difficultyFilter)
@@ -71,7 +81,21 @@ export default function AdminQuestionsPage() {
         return false;
       return true;
     });
-  }, [questions, debouncedQuery, difficultyFilter, topicFilter]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceForFilter, debouncedQuery, difficultyFilter, topicFilter]);
+
+  // When filtering, paginate allFilteredQuestions locally.
+  // When not filtering, use the server-paginated questions slice as-is.
+  const isFiltering = debouncedQuery.trim() !== "" || difficultyFilter !== "All" || topicFilter !== "All";
+  const filteredTotal = isFiltering ? allFilteredQuestions.length : total;
+  const filteredTotalPages = Math.max(1, Math.ceil(filteredTotal / ITEMS_PER_PAGE));
+
+  const filteredQuestions = useMemo(() => {
+    if (!isFiltering) return questions;
+    const start = (page - 1) * ITEMS_PER_PAGE;
+    return allFilteredQuestions.slice(start, start + ITEMS_PER_PAGE);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allFilteredQuestions, isFiltering, page, questions]);
 
   // Paginated fetch for the table
   const fetchQuestions = async (pageNum: number) => {
@@ -137,10 +161,8 @@ export default function AdminQuestionsPage() {
     setTopicFilter("All");
   };
 
-  const hasActiveFilters =
-    searchQuery !== "" || difficultyFilter !== "All" || topicFilter !== "All";
+  const hasActiveFilters = isFiltering;
 
-  const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
   if (loading) {
     return (
@@ -152,6 +174,7 @@ export default function AdminQuestionsPage() {
 
   return (
     <div>
+      {/* ── Header ── */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Question Bank</h1>
         <Link href="/admin/questions/new/edit">
@@ -159,6 +182,7 @@ export default function AdminQuestionsPage() {
         </Link>
       </div>
 
+      {/* ── Difficulty Breakdown Widget ── */}
       {allQuestions.length > 0 && (
         <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
           <p className="mb-3 text-xs font-medium uppercase tracking-wide text-gray-400">
@@ -187,7 +211,7 @@ export default function AdminQuestionsPage() {
               );
             })}
           </div>
-
+          {/* Stacked proportion bar */}
           <div className="flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
             {DIFFICULTIES.map((d) => {
               const pct = allQuestions.length > 0
@@ -209,6 +233,7 @@ export default function AdminQuestionsPage() {
         </div>
       )}
 
+      {/* ── Search + Filters row ── */}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         {/* Search */}
         <div className="relative flex-1">
@@ -240,6 +265,7 @@ export default function AdminQuestionsPage() {
           )}
         </div>
 
+        {/* Difficulty dropdown */}
         <select
           value={difficultyFilter}
           onChange={(e) => setDifficultyFilter(e.target.value as Difficulty | "All")}
@@ -251,6 +277,7 @@ export default function AdminQuestionsPage() {
           ))}
         </select>
 
+        {/* Topic dropdown */}
         <select
           value={topicFilter}
           onChange={(e) => setTopicFilter(e.target.value)}
@@ -271,6 +298,7 @@ export default function AdminQuestionsPage() {
         )}
       </div>
 
+      {/* Active filter pills */}
       {hasActiveFilters && (
         <div className="mb-3 flex flex-wrap gap-1.5">
           {debouncedQuery && (
@@ -294,6 +322,7 @@ export default function AdminQuestionsPage() {
         </div>
       )}
 
+      {/* ── Table ── */}
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <table className="w-full text-sm">
           <thead>
@@ -313,15 +342,11 @@ export default function AdminQuestionsPage() {
                     {q.topics.map((t) => (
                       <button
                         key={t}
-                        onClick={() => setTopicFilter(topicFilter === t ? "All" : t)}
-                        title={topicFilter === t ? `Remove filter "${t}"` : `Filter by ${t}`}
-                        className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
-                          topicFilter === t
-                            ? "border-[#5568EE]/40 bg-[#5568EE]/10 text-[#5568EE]"
-                            : "border-gray-200 bg-gray-50 text-gray-600 hover:border-[#5568EE]/40 hover:bg-[#5568EE]/5 hover:text-[#5568EE]"
-                        }`}
+                        onClick={() => setTopicFilter(t)}
+                        title={`Filter by ${t}`}
+                        className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-600 hover:border-[#5568EE]/40 hover:bg-[#5568EE]/5 hover:text-[#5568EE] transition-colors"
                       >
-                        {t}{topicFilter === t ? " ✕" : ""}
+                        {t}
                       </button>
                     ))}
                   </div>
@@ -360,27 +385,29 @@ export default function AdminQuestionsPage() {
         </table>
       </div>
 
+      {/* ── Pagination ── */}
       {total > 0 && (
         <div className="mt-6 flex items-center justify-between">
           <p className="text-sm text-gray-600">
             {hasActiveFilters
-              ? `${filteredQuestions.length} result${filteredQuestions.length !== 1 ? "s" : ""} on this page`
+              ? `Showing ${(page - 1) * ITEMS_PER_PAGE + 1}–${Math.min(page * ITEMS_PER_PAGE, filteredTotal)} of ${filteredTotal} result${filteredTotal !== 1 ? "s" : ""}`
               : `Showing ${(page - 1) * ITEMS_PER_PAGE + 1}–${Math.min(page * ITEMS_PER_PAGE, total)} of ${total} questions`}
           </p>
           <div className="flex gap-2">
-            <Button variant="secondary" disabled={page === 1} onClick={() => fetchQuestions(page - 1)}>
+            <Button variant="secondary" disabled={page === 1} onClick={() => { if (isFiltering) setPage(p => p - 1); else fetchQuestions(page - 1); }}>
               Previous
             </Button>
             <span className="flex items-center px-3 text-sm text-gray-600">
-              Page {page} of {totalPages}
+              Page {page} of {filteredTotalPages}
             </span>
-            <Button variant="secondary" disabled={page >= totalPages} onClick={() => fetchQuestions(page + 1)}>
+            <Button variant="secondary" disabled={page >= filteredTotalPages} onClick={() => { if (isFiltering) setPage(p => p + 1); else fetchQuestions(page + 1); }}>
               Next
             </Button>
           </div>
         </div>
       )}
 
+      {/* ── Delete Modal ── */}
       <Modal
         open={!!deleteTarget}
         onClose={() => { setDeleteTarget(null); setDeleteConfirm(""); }}
