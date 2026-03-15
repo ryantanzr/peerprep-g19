@@ -45,7 +45,7 @@ class QuestionSchema(BaseModel):
     difficulty: str
     model_answer_code: Optional[str] = None
     model_answer_lang: Optional[str] = None
-    version: int = Field(default=1)
+    version: int = Field(default=0)
 
     @field_validator('difficulty', mode='before')
     def validate_difficulty(cls, v):
@@ -175,18 +175,28 @@ async def fetch_question(topics: str, difficulty: str):
 
 
 @app.get("/questions")
-async def list_questions():
-    """Returns all questions in the database."""
+async def list_questions(skip: int = 0, limit: int = 20):
+    """Returns paginated questions from the database."""
+    if skip < 0 or limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Invalid pagination parameters. limit must be 1-100, skip must be >= 0")
+    
     try:
-        cursor = questions_col.find({})
-        results = await cursor.to_list(length=500)
+        total = await questions_col.count_documents({})
+        cursor = questions_col.find({}).skip(skip).limit(limit)
+        results = await cursor.to_list(length=limit)
     except PyMongoError as exc:
         logger.error("MongoDB query failed: %s", exc)
         raise HTTPException(status_code=503, detail="Database unavailable, please retry later") from exc
 
     for r in results:
         r["_id"] = str(r["_id"])
-    return results
+    return {
+        "data": results,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "hasMore": skip + limit < total
+    }
 
 
 @app.get("/questions/{title}")
