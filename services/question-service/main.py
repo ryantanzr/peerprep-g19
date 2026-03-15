@@ -97,7 +97,7 @@ async def upsert_question(
 
     data = qn.model_dump()
     title = data["title"]
-    version = data.get("version", 1)
+    version = data.get("version", 0)
     now = datetime.now(timezone.utc).isoformat()
 
     set_fields = {k: v for k, v in data.items() if k != "title"}
