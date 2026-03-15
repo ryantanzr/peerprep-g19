@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { listQuestions, deleteQuestion } from "@/lib/api/question";
 import { Button } from "@/components/ui/button";
@@ -20,9 +20,24 @@ export default function AdminQuestionsPage() {
   const [deleting, setDeleting] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  // Debounce search input by 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Client-side filter on title
+  const filteredQuestions = useMemo(() => {
+    if (!debouncedQuery.trim()) return questions;
+    const lower = debouncedQuery.toLowerCase();
+    return questions.filter((q) => q.title.toLowerCase().includes(lower));
+  }, [questions, debouncedQuery]);
 
   const fetchQuestions = async (pageNum: number) => {
-    setLoading(false);
+    setLoading(true);
     try {
       const skip = (pageNum - 1) * ITEMS_PER_PAGE;
       const response = await listQuestions(skip, ITEMS_PER_PAGE);
@@ -79,6 +94,35 @@ export default function AdminQuestionsPage() {
         </Link>
       </div>
 
+      <div className="relative mb-4">
+        <svg
+          className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={2}
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Search by title..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:border-[#5568EE] focus:outline-none focus:ring-1 focus:ring-[#5568EE]"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            aria-label="Clear search"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <table className="w-full text-sm">
           <thead>
@@ -90,7 +134,7 @@ export default function AdminQuestionsPage() {
             </tr>
           </thead>
           <tbody>
-            {questions.map((q) => (
+            {filteredQuestions.map((q) => (
               <tr key={q._id} className="border-b border-gray-100 last:border-0">
                 <td className="px-4 py-3 font-medium">{q.title}</td>
                 <td className="px-4 py-3 text-gray-600">{q.topics.join(", ")}</td>
@@ -115,10 +159,12 @@ export default function AdminQuestionsPage() {
                 </td>
               </tr>
             ))}
-            {questions.length === 0 && (
+            {filteredQuestions.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
-                  No questions yet. Add your first one!
+                  {debouncedQuery
+                    ? `No questions found matching "${debouncedQuery}"`
+                    : "No questions yet. Add your first one!"}
                 </td>
               </tr>
             )}
