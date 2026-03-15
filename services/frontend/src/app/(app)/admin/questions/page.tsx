@@ -11,31 +11,69 @@ import type { Question } from "@/types/question";
 
 const ITEMS_PER_PAGE = 20;
 
+const DIFFICULTIES = ["Easy", "Medium", "Hard"] as const;
+type Difficulty = (typeof DIFFICULTIES)[number];
+
+const DIFFICULTY_STYLES: Record<Difficulty, { bar: string; badge: string; text: string }> = {
+  Easy:   { bar: "bg-green-400",  badge: "bg-green-50 text-green-700 border-green-200",   text: "text-green-600" },
+  Medium: { bar: "bg-yellow-400", badge: "bg-yellow-50 text-yellow-700 border-yellow-200", text: "text-yellow-600" },
+  Hard:   { bar: "bg-red-400",    badge: "bg-red-50 text-red-700 border-red-200",          text: "text-red-600" },
+};
+
 export default function AdminQuestionsPage() {
   const { toast } = useToast();
+
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+
   const [deleteTarget, setDeleteTarget] = useState<Question | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [difficultyFilter, setDifficultyFilter] = useState<Difficulty | "All">("All");
+  const [topicFilter, setTopicFilter] = useState<string>("All");
 
-  // Debounce search input by 300ms
+  // Debounce search
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
-    return () => clearTimeout(timer);
+    const t = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(t);
   }, [searchQuery]);
 
-  // Client-side filter on title
-  const filteredQuestions = useMemo(() => {
-    if (!debouncedQuery.trim()) return questions;
-    const lower = debouncedQuery.toLowerCase();
-    return questions.filter((q) => q.title.toLowerCase().includes(lower));
-  }, [questions, debouncedQuery]);
+  // Derive unique topics from all loaded questions
+  const allTopics = useMemo(() => {
+    const set = new Set<string>();
+    allQuestions.forEach((q) => q.topics.forEach((t) => set.add(t)));
+    return ["All", ...Array.from(set).sort()];
+  }, [allQuestions]);
 
+  // Difficulty breakdown counts for the widget
+  const breakdownCounts = useMemo(() => {
+    const counts: Record<Difficulty, number> = { Easy: 0, Medium: 0, Hard: 0 };
+    allQuestions.forEach((q) => {
+      if (q.difficulty in counts) counts[q.difficulty as Difficulty]++;
+    });
+    return counts;
+  }, [allQuestions]);
+
+  // Client-side filter: title + difficulty + topic
+  const filteredQuestions = useMemo(() => {
+    return questions.filter((q) => {
+      if (debouncedQuery.trim() && !q.title.toLowerCase().includes(debouncedQuery.toLowerCase()))
+        return false;
+      if (difficultyFilter !== "All" && q.difficulty !== difficultyFilter)
+        return false;
+      if (topicFilter !== "All" && !q.topics.includes(topicFilter))
+        return false;
+      return true;
+    });
+  }, [questions, debouncedQuery, difficultyFilter, topicFilter]);
+
+  // Paginated fetch for the table
   const fetchQuestions = async (pageNum: number) => {
     setLoading(true);
     try {
@@ -51,8 +89,26 @@ export default function AdminQuestionsPage() {
     }
   };
 
+  // Full fetch for stats widget + topic list (runs once, non-blocking)
+  const fetchAllForStats = async () => {
+    try {
+      const all: Question[] = [];
+      let skip = 0;
+      while (true) {
+        const res = await listQuestions(skip, 100);
+        all.push(...res.data);
+        if (!res.hasMore) break;
+        skip += 100;
+      }
+      setAllQuestions(all);
+    } catch {
+      // non-critical — widget silently skipped
+    }
+  };
+
   useEffect(() => {
     fetchQuestions(1);
+    fetchAllForStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -64,7 +120,7 @@ export default function AdminQuestionsPage() {
       toast(`Deleted "${deleteTarget.title}"`, "success");
       setDeleteTarget(null);
       setDeleteConfirm("");
-      // If we deleted the last item on this page, step back one page
+      setAllQuestions((prev) => prev.filter((q) => q._id !== deleteTarget._id));
       const newTotal = total - 1;
       const maxPage = Math.max(1, Math.ceil(newTotal / ITEMS_PER_PAGE));
       fetchQuestions(Math.min(page, maxPage));
@@ -74,6 +130,15 @@ export default function AdminQuestionsPage() {
       setDeleting(false);
     }
   };
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setDifficultyFilter("All");
+    setTopicFilter("All");
+  };
+
+  const hasActiveFilters =
+    searchQuery !== "" || difficultyFilter !== "All" || topicFilter !== "All";
 
   const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
@@ -94,34 +159,140 @@ export default function AdminQuestionsPage() {
         </Link>
       </div>
 
-      <div className="relative mb-4">
-        <svg
-          className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search by title..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:border-[#5568EE] focus:outline-none focus:ring-1 focus:ring-[#5568EE]"
-        />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-            aria-label="Clear search"
+      {allQuestions.length > 0 && (
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4">
+          <p className="mb-3 text-xs font-medium uppercase tracking-wide text-gray-400">
+            Difficulty Breakdown of all questions
+          </p>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            {DIFFICULTIES.map((d) => {
+              const count = breakdownCounts[d];
+              const pct = allQuestions.length > 0
+                ? Math.round((count / allQuestions.length) * 100)
+                : 0;
+              const styles = DIFFICULTY_STYLES[d];
+              return (
+                <button
+                  key={d}
+                  onClick={() => setDifficultyFilter(difficultyFilter === d ? "All" : d)}
+                  className={`rounded-lg border px-3 py-3 text-left transition-all hover:shadow-sm ${
+                    difficultyFilter === d
+                      ? `${styles.badge} border-current shadow-sm`
+                      : "border-gray-100 bg-gray-50 hover:border-gray-200"
+                  }`}
+                >
+                  <p className={`text-2xl font-bold ${styles.text}`}>{count}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{d} · {pct}%</p>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
+            {DIFFICULTIES.map((d) => {
+              const pct = allQuestions.length > 0
+                ? (breakdownCounts[d] / allQuestions.length) * 100
+                : 0;
+              return pct > 0 ? (
+                <div
+                  key={d}
+                  className={`${DIFFICULTY_STYLES[d].bar} transition-all`}
+                  style={{ width: `${pct}%` }}
+                  title={`${d}: ${breakdownCounts[d]}`}
+                />
+              ) : null;
+            })}
+          </div>
+          <p className="mt-2 text-xs text-gray-400 text-right">
+            {allQuestions.length} total questions
+          </p>
+        </div>
+      )}
+
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+        {/* Search */}
+        <div className="relative flex-1">
+          <svg
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
           >
-            ✕
+            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0Z" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search by title..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-8 text-sm text-gray-900 placeholder-gray-400 focus:border-[#5568EE] focus:outline-none focus:ring-1 focus:ring-[#5568EE]"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              aria-label="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        <select
+          value={difficultyFilter}
+          onChange={(e) => setDifficultyFilter(e.target.value as Difficulty | "All")}
+          className="rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-8 text-sm text-gray-700 focus:border-[#5568EE] focus:outline-none focus:ring-1 focus:ring-[#5568EE]"
+        >
+          <option value="All">All Difficulties</option>
+          {DIFFICULTIES.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+
+        <select
+          value={topicFilter}
+          onChange={(e) => setTopicFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 bg-white py-2 pl-3 pr-8 text-sm text-gray-700 focus:border-[#5568EE] focus:outline-none focus:ring-1 focus:ring-[#5568EE]"
+        >
+          {allTopics.map((t) => (
+            <option key={t} value={t}>{t === "All" ? "All Topics" : t}</option>
+          ))}
+        </select>
+
+        {hasActiveFilters && (
+          <button
+            onClick={clearFilters}
+            className="whitespace-nowrap text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2"
+          >
+            Clear all
           </button>
         )}
       </div>
+
+      {hasActiveFilters && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {debouncedQuery && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-xs text-gray-600">
+              &quot;{debouncedQuery}&quot;
+              <button onClick={() => setSearchQuery("")} className="opacity-50 hover:opacity-100">✕</button>
+            </span>
+          )}
+          {difficultyFilter !== "All" && (
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs ${DIFFICULTY_STYLES[difficultyFilter].badge}`}>
+              {difficultyFilter}
+              <button onClick={() => setDifficultyFilter("All")} className="opacity-50 hover:opacity-100">✕</button>
+            </span>
+          )}
+          {topicFilter !== "All" && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-[#5568EE]/30 bg-[#5568EE]/5 px-2.5 py-0.5 text-xs text-[#5568EE]">
+              {topicFilter}
+              <button onClick={() => setTopicFilter("All")} className="opacity-50 hover:opacity-100">✕</button>
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <table className="w-full text-sm">
@@ -137,7 +308,24 @@ export default function AdminQuestionsPage() {
             {filteredQuestions.map((q) => (
               <tr key={q._id} className="border-b border-gray-100 last:border-0">
                 <td className="px-4 py-3 font-medium">{q.title}</td>
-                <td className="px-4 py-3 text-gray-600">{q.topics.join(", ")}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {q.topics.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setTopicFilter(topicFilter === t ? "All" : t)}
+                        title={topicFilter === t ? `Remove filter "${t}"` : `Filter by ${t}`}
+                        className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
+                          topicFilter === t
+                            ? "border-[#5568EE]/40 bg-[#5568EE]/10 text-[#5568EE]"
+                            : "border-gray-200 bg-gray-50 text-gray-600 hover:border-[#5568EE]/40 hover:bg-[#5568EE]/5 hover:text-[#5568EE]"
+                        }`}
+                      >
+                        {t}{topicFilter === t ? " ✕" : ""}
+                      </button>
+                    ))}
+                  </div>
+                </td>
                 <td className="px-4 py-3">
                   <span className={`font-medium ${getDifficultyColor(q.difficulty).split(" ")[0]}`}>
                     {q.difficulty}
@@ -162,8 +350,8 @@ export default function AdminQuestionsPage() {
             {filteredQuestions.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
-                  {debouncedQuery
-                    ? `No questions found matching "${debouncedQuery}"`
+                  {hasActiveFilters
+                    ? "No questions match the current filters."
                     : "No questions yet. Add your first one!"}
                 </td>
               </tr>
@@ -175,24 +363,18 @@ export default function AdminQuestionsPage() {
       {total > 0 && (
         <div className="mt-6 flex items-center justify-between">
           <p className="text-sm text-gray-600">
-            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, total)} of {total} questions
+            {hasActiveFilters
+              ? `${filteredQuestions.length} result${filteredQuestions.length !== 1 ? "s" : ""} on this page`
+              : `Showing ${(page - 1) * ITEMS_PER_PAGE + 1}–${Math.min(page * ITEMS_PER_PAGE, total)} of ${total} questions`}
           </p>
           <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              disabled={page === 1}
-              onClick={() => fetchQuestions(page - 1)}
-            >
+            <Button variant="secondary" disabled={page === 1} onClick={() => fetchQuestions(page - 1)}>
               Previous
             </Button>
             <span className="flex items-center px-3 text-sm text-gray-600">
               Page {page} of {totalPages}
             </span>
-            <Button
-              variant="secondary"
-              disabled={page >= totalPages}
-              onClick={() => fetchQuestions(page + 1)}
-            >
+            <Button variant="secondary" disabled={page >= totalPages} onClick={() => fetchQuestions(page + 1)}>
               Next
             </Button>
           </div>
@@ -201,10 +383,7 @@ export default function AdminQuestionsPage() {
 
       <Modal
         open={!!deleteTarget}
-        onClose={() => {
-          setDeleteTarget(null);
-          setDeleteConfirm("");
-        }}
+        onClose={() => { setDeleteTarget(null); setDeleteConfirm(""); }}
       >
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-red-600 text-center">Confirm Deletion</h2>
