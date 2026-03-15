@@ -9,6 +9,8 @@ import { useToast } from "@/components/ui/toast";
 import { getDifficultyColor } from "@/lib/utils";
 import type { Question } from "@/types/question";
 
+const ITEMS_PER_PAGE = 20;
+
 export default function AdminQuestionsPage() {
   const { toast } = useToast();
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -16,11 +18,17 @@ export default function AdminQuestionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Question | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  const fetchQuestions = async () => {
+  const fetchQuestions = async (pageNum: number) => {
+    setLoading(false);
     try {
-      const data = await listQuestions();
-      setQuestions(data);
+      const skip = (pageNum - 1) * ITEMS_PER_PAGE;
+      const response = await listQuestions(skip, ITEMS_PER_PAGE);
+      setQuestions(response.data);
+      setTotal(response.total);
+      setPage(pageNum);
     } catch {
       toast("Failed to load questions", "error");
     } finally {
@@ -29,7 +37,7 @@ export default function AdminQuestionsPage() {
   };
 
   useEffect(() => {
-    fetchQuestions();
+    fetchQuestions(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -38,10 +46,13 @@ export default function AdminQuestionsPage() {
     setDeleting(true);
     try {
       await deleteQuestion(deleteTarget.title);
-      setQuestions((prev) => prev.filter((q) => q._id !== deleteTarget._id));
       toast(`Deleted "${deleteTarget.title}"`, "success");
       setDeleteTarget(null);
       setDeleteConfirm("");
+      // If we deleted the last item on this page, step back one page
+      const newTotal = total - 1;
+      const maxPage = Math.max(1, Math.ceil(newTotal / ITEMS_PER_PAGE));
+      fetchQuestions(Math.min(page, maxPage));
     } catch {
       toast("Failed to delete question", "error");
     } finally {
@@ -49,8 +60,14 @@ export default function AdminQuestionsPage() {
     }
   };
 
+  const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
+
   if (loading) {
-    return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-[#5568EE]" /></div>;
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-[#5568EE]" />
+      </div>
+    );
   }
 
   return (
@@ -109,10 +126,46 @@ export default function AdminQuestionsPage() {
         </table>
       </div>
 
-      <Modal open={!!deleteTarget} onClose={() => { setDeleteTarget(null); setDeleteConfirm(""); }}>
+      {total > 0 && (
+        <div className="mt-6 flex items-center justify-between">
+          <p className="text-sm text-gray-600">
+            Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, total)} of {total} questions
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              disabled={page === 1}
+              onClick={() => fetchQuestions(page - 1)}
+            >
+              Previous
+            </Button>
+            <span className="flex items-center px-3 text-sm text-gray-600">
+              Page {page} of {totalPages}
+            </span>
+            <Button
+              variant="secondary"
+              disabled={page >= totalPages}
+              onClick={() => fetchQuestions(page + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => {
+          setDeleteTarget(null);
+          setDeleteConfirm("");
+        }}
+      >
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-red-600 text-center">Confirm Deletion</h2>
-          <p className="text-center text-gray-600">Type &quot;DELETE&quot; to confirm</p>
+          <p className="text-center text-gray-600">
+            Type &quot;DELETE&quot; to confirm removing{" "}
+            <span className="font-medium">&quot;{deleteTarget?.title}&quot;</span>
+          </p>
           <input
             type="text"
             value={deleteConfirm}
@@ -120,7 +173,11 @@ export default function AdminQuestionsPage() {
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
           />
           <div className="flex justify-end">
-            <Button variant="danger" disabled={deleteConfirm !== "DELETE" || deleting} onClick={handleDelete}>
+            <Button
+              variant="danger"
+              disabled={deleteConfirm !== "DELETE" || deleting}
+              onClick={handleDelete}
+            >
               {deleting ? "Deleting..." : "Delete"}
             </Button>
           </div>

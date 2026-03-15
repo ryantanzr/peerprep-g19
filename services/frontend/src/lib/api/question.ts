@@ -1,8 +1,21 @@
 import { apiFetch } from "./client";
 import type { Question, QuestionUpsertRequest } from "@/types/question";
 
-export async function listQuestions(): Promise<Question[]> {
-  return apiFetch<Question[]>("/api/questions-list");
+export interface PaginatedQuestions {
+  data: Question[];
+  total: number;
+  skip: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+export async function listQuestions(
+  skip = 0,
+  limit = 20,
+): Promise<PaginatedQuestions> {
+  return apiFetch<PaginatedQuestions>(
+    `/api/questions-list?skip=${skip}&limit=${limit}`,
+  );
 }
 
 export async function getQuestion(title: string): Promise<Question> {
@@ -23,8 +36,13 @@ export async function deleteQuestion(title: string) {
   });
 }
 
-export async function fetchRandomQuestion(topics: string, difficulty: string): Promise<Question> {
-  return apiFetch<Question>(`/api/questions-fetch?topics=${encodeURIComponent(topics)}&difficulty=${encodeURIComponent(difficulty)}`);
+export async function fetchRandomQuestion(
+  topics: string,
+  difficulty: string,
+): Promise<Question> {
+  return apiFetch<Question>(
+    `/api/questions-fetch?topics=${encodeURIComponent(topics)}&difficulty=${encodeURIComponent(difficulty)}`,
+  );
 }
 
 /**
@@ -37,7 +55,18 @@ export async function fetchDeterministicQuestion(
   difficulty: string,
   sessionId: string,
 ): Promise<Question | null> {
-  const all = await listQuestions();
+  // Fetch all matching questions via paginated API — keep fetching until hasMore is false
+  const all: Question[] = [];
+  let skip = 0;
+  const limit = 100;
+
+  while (true) {
+    const page = await listQuestions(skip, limit);
+    all.push(...page.data);
+    if (!page.hasMore) break;
+    skip += limit;
+  }
+
   const filtered = all
     .filter((q) => q.topics.includes(topic) && q.difficulty === difficulty)
     .sort((a, b) => a.title.localeCompare(b.title));
