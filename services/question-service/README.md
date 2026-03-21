@@ -1,6 +1,6 @@
 # PeerPrep — Question Service
 
-A FastAPI microservice for managing interview practice questions, backed by MongoDB Atlas and RabbitMQ. Writes are decoupled via a companion worker that consumes from a message queue; reads hit MongoDB directly.
+A FastAPI microservice for managing interview practice questions, backed by MongoDB Atlas. All reads and writes go directly to MongoDB; requests are validated and executed synchronously.
 
 ---
 
@@ -10,24 +10,19 @@ A FastAPI microservice for managing interview practice questions, backed by Mong
 Client
   │
   ▼ HTTP
-┌─────────────────┐        ┌──────────────────────┐
-│   api container │──────▶ │  rabbitmq container  │
-│   (FastAPI)     │        │  question_tasks queue │
-└─────────────────┘        └──────────┬───────────┘
-                                       │ consumes
-                           ┌───────────▼───────────┐
-                           │   worker container    │
-                           └───────────┬───────────┘
-                                       │ reads / writes
-                           ┌───────────▼───────────┐
-                           │    MongoDB Atlas       │
-                           │    (external)         │
-                           └───────────────────────┘
+┌─────────────────┐
+│   api container │
+│   (FastAPI)     │
+└────────┬────────┘
+         │ reads / writes
+┌────────▼────────┐
+│  MongoDB Atlas  │
+│   (external)   │
+└─────────────────┘
 ```
 
-- **`api`** — validates requests, publishes to RabbitMQ, returns `202 Accepted` immediately. Reads (`GET /fetch`) bypass the queue and go direct to MongoDB.
-- **`worker`** — long-running consumer loop; performs the actual MongoDB writes with optimistic concurrency (version-guarded upserts).
-- **`rabbitmq`** — managed locally via Docker; replaced by Amazon MQ in production.
+- **`api`** — validates requests and performs MongoDB reads/writes directly, returning results synchronously.
+- Writes on `/create` and `/update` use **optimistic locking** via a `version` field to prevent concurrent write conflicts.
 
 ---
 
@@ -47,30 +42,21 @@ Create a `.env` file in the project root (same directory as `compose.yaml`):
 MONGO_URL=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/
 ```
 
-> `RABBITMQ_URL` is intentionally omitted — it defaults to the local broker
-> spun up by Compose (`amqp://guest:guest@rabbitmq/`).
-
 **Never commit `.env` to version control.** Add it to `.gitignore`:
 
 ```bash
 echo ".env" >> .gitignore
 ```
 
-### 2. Build and start all services
+### 2. Build and start the service
 
 ```bash
 docker compose up --build
 ```
 
-This starts three containers in dependency order:
-
-| Container  | Exposed port | Purpose                        |
-|------------|-------------|--------------------------------|
-| `rabbitmq` | 5672, 15672 | Message broker                 |
-| `api`      | 8000        | REST API                       |
-| `worker`   | —           | Queue consumer (no public port)|
-
-The `api` and `worker` containers will wait for RabbitMQ's healthcheck to pass before starting.
+| Container | Exposed port | Purpose  |
+|-----------|-------------|----------|
+| `api`     | 8000        | REST API |
 
 ### 3. Verify everything is running
 
@@ -78,15 +64,13 @@ The `api` and `worker` containers will wait for RabbitMQ's healthcheck to pass b
 docker compose ps
 ```
 
-All three services should show `running (healthy)` or `running`.
+The `api` service should show `running (healthy)`.
 
 ---
 
-## Testing
+## API Reference
 
-### Interactive API docs
-
-Open [http://localhost:8000/docs](http://localhost:8000/docs) in your browser for the auto-generated Swagger UI.
+All write endpoints require a Bearer token (mocked in local dev — any non-empty string works).
 
 ### Health check
 
@@ -95,12 +79,10 @@ curl http://localhost:8000/health
 # {"status": "ok"}
 ```
 
-### Create / update a question (`POST /upsert`)
-
-The endpoint requires a Bearer token (mocked in local dev — any non-empty string works):
+### Create a question (`POST /create`)
 
 ```bash
-curl -X POST http://localhost:8000/upsert \
+curl -X POST http://localhost:8000/create \
   -H "Authorization: Bearer dev-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -113,67 +95,116 @@ curl -X POST http://localhost:8000/upsert \
     "model_answer_lang": "py"
   }'
 
-# Expected: {"status": "Request queued", "initiated_by": "admin@cloud-idp.com"}
+# {"status": "created", "title": "Two Sum", "id": "<ObjectId>", "version": 1}
 ```
 
-The response is immediate (`202`). The worker processes the write asynchronously — check worker logs to confirm:
+Returns `409 Conflict` if a question with the same title already exists.
+
+### Update a question (`PUT /update/{id}`)
+
+The `version` field is required and must match the document's current version (optimistic locking). On a conflict the response includes the current server-side version so you can re-fetch and retry.
 
 ```bash
-docker compose logs worker --follow
+curl -X PUT http://localhost:8000/update/<id> \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Two Sum",
+    "description": "Updated description.",
+    "topics": ["Arrays", "HashMaps"],
+    "difficulty": "Easy",
+    "hints": ["Try using a hash map for O(n) time."],
+    "model_answer_code": "def twoSum(nums, target): ...",
+    "model_answer_lang": "py",
+    "version": 1
+  }'
+
+# {"status": "updated", "id": "<id>", "title": "Two Sum", "version": 2}
 ```
 
-### Fetch a question (`GET /fetch`)
+Returns `409 Conflict` if the version doesn't match or another question already holds the new title. Returns `404` if the ID doesn't exist.
+
+### Delete a question (`DELETE /delete`)
 
 ```bash
-curl "http://localhost:8000/fetch?topic=Arrays&difficulty=Easy"
+curl -X DELETE http://localhost:8000/delete \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Two Sum"}'
+
+# {"status": "deleted", "title": "Two Sum"}
 ```
 
-### Monitor the RabbitMQ queue
-
-Open [http://localhost:15672](http://localhost:15672) (login: `guest` / `guest`).
-Navigate to **Queues** → `question_tasks` to see message rates and depth in real time.
-
-### Scale workers horizontally
+### Fetch a random matching question (`GET /fetch`)
 
 ```bash
-docker compose up --scale worker=3
+curl "http://localhost:8000/fetch?topics=Arrays,HashMaps&difficulty=Easy"
 ```
 
-Three worker containers will compete to consume from the same queue — useful for testing concurrent write load.
+`topics` is a comma-separated list. Returns a single randomly selected question matching any of the provided topics and the given difficulty.
 
-### Tear down
+### List all questions (`GET /questions`)
 
 ```bash
-docker compose down          # stops containers, keeps RabbitMQ volume
-docker compose down -v       # also deletes the RabbitMQ data volume
+curl "http://localhost:8000/questions?skip=0&limit=20"
+
+# {"data": [...], "total": 42, "skip": 0, "limit": 20, "hasMore": true}
 ```
+
+`limit` must be between 1 and 100. `skip` must be ≥ 0.
+
+### Get a question by ID (`GET /questions/{id}`)
+
+```bash
+curl "http://localhost:8000/questions/<ObjectId>"
+```
+
+Returns `404` if not found, `400` if the ID format is invalid.
+
+### Interactive API docs
+
+Open [http://localhost:8000/docs](http://localhost:8000/docs) for the auto-generated Swagger UI.
+
+---
+
+## Running Tests
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt pytest pytest-asyncio httpx anyio
+```
+
+Run the test suite:
+
+```bash
+pytest test_main.py -v
+```
+
+Useful flags:
+- `-k "TestCreate"` — run only a specific test class
+- `-x` — stop on first failure
+- `--tb=short` — shorter tracebacks
 
 ---
 
 ## Environment Variables
 
-| Variable                  | Required | Default                              | Description                          |
-|---------------------------|----------|--------------------------------------|--------------------------------------|
-| `MONGO_URL`               | Yes      | —                                    | MongoDB Atlas connection string      |
-| `RABBITMQ_URL`            | No       | `amqp://guest:guest@rabbitmq/`       | RabbitMQ connection string           |
-| `WORKER_PREFETCH`         | No       | `10`                                 | Messages prefetched per worker       |
-| `RECONNECT_DELAY_SECONDS` | No       | `5`                                  | Worker RabbitMQ reconnect delay (s)  |
+| Variable    | Required | Default                       | Description                     |
+|-------------|----------|-------------------------------|---------------------------------|
+| `MONGO_URL` | Yes      | `mongodb://localhost:27017`   | MongoDB connection string        |
 
 ---
 
 ## Deploying to AWS (ECR + ECS)
 
-When moving to AWS, the local Compose setup is replaced by managed AWS services. The application code and Dockerfile require **no changes**.
-
 ### What changes
 
-| Local (Compose)              | AWS equivalent                              |
-|------------------------------|---------------------------------------------|
-| `rabbitmq` container         | Amazon MQ (RabbitMQ broker)                 |
-| `docker compose up`          | ECS task definitions / ECS service          |
-| `.env` file                  | AWS Secrets Manager or SSM Parameter Store  |
-| Docker bridge network        | VPC with private subnets                    |
-| `--scale worker=3`           | ECS service desired count                   |
+| Local (Compose)  | AWS equivalent                             |
+|------------------|--------------------------------------------|
+| `docker compose up` | ECS task definition / ECS service       |
+| `.env` file      | AWS Secrets Manager or SSM Parameter Store |
+| Docker bridge network | VPC with private subnets             |
 
 ### Step-by-step
 
@@ -197,41 +228,25 @@ docker push \
 
 #### 2. Store secrets
 
-Store both connection strings in AWS Secrets Manager (not as plaintext environment variables):
-
 ```bash
 aws secretsmanager create-secret \
   --name peerprep/MONGO_URL \
   --secret-string "mongodb+srv://..."
-
-aws secretsmanager create-secret \
-  --name peerprep/RABBITMQ_URL \
-  --secret-string "amqps://user:pass@<amazon-mq-endpoint>:5671/"
 ```
 
-Reference these secrets in your ECS task definitions under `secrets` — ECS will inject them as environment variables at runtime.
+Reference this secret in your ECS task definition under `secrets` — ECS will inject it as an environment variable at runtime.
 
-#### 3. Create two ECS task definitions
+#### 3. Create an ECS task definition
 
-Use the **same ECR image** for both, but with different `command` overrides (mirroring the Compose setup):
+| Service | Command override                                                  |
+|---------|-------------------------------------------------------------------|
+| `api`   | `python -m uvicorn main:app --host 0.0.0.0 --port 8000`         |
 
-| Service | Command override                                                                 |
-|---------|---------------------------------------------------------------------------------|
-| `api`   | `python -m uvicorn main:app --host 0.0.0.0 --port 8000`                        |
-| `worker`| `python worker.py`                                                              |
+#### 4. Create an ECS service
 
-#### 4. Create two ECS services
-
-- **api service**: place behind an Application Load Balancer; desired count scales with HTTP traffic.
-- **worker service**: no load balancer needed; scale desired count based on queue depth (set up a CloudWatch alarm on Amazon MQ queue depth to trigger auto-scaling).
+Place the `api` service behind an Application Load Balancer. Scale desired count based on HTTP traffic via a CloudWatch alarm or target tracking policy.
 
 #### 5. Networking
 
-- Deploy both ECS services and the Amazon MQ broker into the **same VPC and private subnets**.
-- The `api` service's security group needs outbound access to Amazon MQ on port `5671`.
-- The `worker` service's security group needs the same.
-- Neither service should have the RabbitMQ management port (15672) open in production.
-
-#### 6. Remove the `rabbitmq` service from compose.yaml (production builds)
-
-For production deployments you can remove or comment out the `rabbitmq` service block entirely — it is only needed for local development. The `api` and `worker` services will connect to Amazon MQ via the `RABBITMQ_URL` secret instead.
+- Deploy the ECS service into a **VPC with private subnets**.
+- Allow outbound access from the `api` security group to MongoDB Atlas on port `27017`.
