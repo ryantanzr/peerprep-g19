@@ -266,17 +266,25 @@ async def list_questions(skip: int = 0, limit: int = 20):
     }
 
 
-@app.get("/questions/{title}")
-async def get_question_by_title(title: str):
-    """Returns a single question by its exact title."""
+@app.get("/questions/{question_id}")
+async def get_question_by_id(question_id: str):
+    """Returns a single question by its ID."""
+
     try:
-        doc = await questions_col.find_one({"title": title})
+        try:
+            obj_id = ObjectId(question_id)
+        except InvalidId:
+            raise HTTPException(status_code=400, detail=f"Invalid question ID format: '{question_id}'")
+
+        doc = await questions_col.find_one({"_id": obj_id})
+    except HTTPException:
+        raise
     except PyMongoError as exc:
-        logger.error("MongoDB query failed for '%s': %s", title, exc)
+        logger.error("MongoDB query failed for id '%s': %s", question_id, exc)
         raise HTTPException(status_code=503, detail="Database unavailable, please retry later") from exc
 
     if not doc:
-        raise HTTPException(status_code=404, detail=f"Question '{title}' not found")
+        raise HTTPException(status_code=404, detail=f"Question with ID '{question_id}' not found")
     doc["_id"] = str(doc["_id"])
     return doc
 
