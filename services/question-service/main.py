@@ -2,6 +2,8 @@ import os
 import random
 import logging
 import motor.motor_asyncio
+from bson import ObjectId
+from bson.errors import InvalidId
 from typing import Optional, List
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Depends
@@ -37,7 +39,7 @@ questions_col = db.questions
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-class QuestionSchema(BaseModel):
+class CreateQuestionSchema(BaseModel):
     title: str = Field(..., max_length=100)
     description: str = Field(..., max_length=2000)
     topics: List[str] = Field(..., max_items=3)
@@ -45,7 +47,6 @@ class QuestionSchema(BaseModel):
     difficulty: str
     model_answer_code: Optional[str] = None
     model_answer_lang: Optional[str] = None
-    version: int = Field(default=0)
 
     @field_validator('difficulty', mode='before')
     def validate_difficulty(cls, v):
@@ -66,6 +67,9 @@ class QuestionSchema(BaseModel):
             raise ValueError("Invalid language for model answer")
         return v
 
+class UpdateQuestionSchema(CreateQuestionSchema):
+    version: int = Field(..., description="Current version of the document for optimistic locking")
+
 class DeleteRequest(BaseModel):
     title: str = Field(..., max_length=100)
 
@@ -81,49 +85,112 @@ async def get_current_admin(token: str = Depends(oauth2_scheme)):
     return "admin@cloud-idp.com"  # Mocked for implementation
 
 
-@app.post("/upsert", status_code=200)
-async def upsert_question(
-    qn: QuestionSchema,
+@app.post("/create", status_code=201)
+async def create_question(
+    qn: CreateQuestionSchema,
     admin_email: str = Depends(get_current_admin),
 ):
     """
-    Upserts a question directly into MongoDB with optimistic locking.
-    - If no document with the given title exists, inserts a new one.
-    - If a matching title is found, update the updated_at field.
-    - If the title exists but the version doesn't match, rejects with 409 Conflict.
+    Creates a new question. Returns 409 Conflict if a question with the same title already exists.
     """
     if qn.model_answer_code and len(qn.model_answer_code.encode()) > 1_000_000:
         raise HTTPException(status_code=400, detail="Model answer code exceeds 1 MB")
 
-    data = qn.model_dump()
-    title = data["title"]
-    version = data.get("version", 0)
     now = datetime.now(timezone.utc).isoformat()
+    data = qn.model_dump()
 
-    set_fields = {k: v for k, v in data.items() if k != "title"}
-    set_fields.update({"updated_at": now, "updated_by": admin_email, "version": version + 1})
+    doc = {
+        **data,
+        "version": 1,
+        "created_at": now,
+        "created_by": admin_email,
+        "updated_at": now,
+        "updated_by": admin_email,
+    }
+
+    try:
+        existing = await questions_col.find_one({"title": data["title"]})
+        if existing:
+            raise HTTPException(status_code=409, detail=f"Question '{data['title']}' already exists.")
+        result = await questions_col.insert_one(doc)
+    except HTTPException:
+        raise
+    except PyMongoError as exc:
+        logger.error("MongoDB error during create for '%s': %s", data["title"], exc)
+        raise HTTPException(status_code=503, detail="Database unavailable, please retry later") from exc
+
+    logger.info("Created new question '%s' by %s", data["title"], admin_email)
+    return {"status": "created", "title": data["title"], "id": str(result.inserted_id), "version": 1}
+
+
+@app.put("/update/{question_id}", status_code=200)
+async def update_question(
+    question_id: str,
+    qn: UpdateQuestionSchema,
+    admin_email: str = Depends(get_current_admin),
+):
+    """
+    Updates an existing question by ID with optimistic locking.
+    The request body must include the current `version` number.
+    Returns 409 Conflict if the version doesn't match (i.e. a concurrent update occurred).
+    Returns 404 if no question with the given ID is found.
+    """
+
+    if qn.model_answer_code and len(qn.model_answer_code.encode()) > 1_000_000:
+        raise HTTPException(status_code=400, detail="Model answer code exceeds 1 MB")
+
+    try:
+        obj_id = ObjectId(question_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail=f"Invalid question ID format: '{question_id}'")
+
+    now = datetime.now(timezone.utc).isoformat()
+    data = qn.model_dump()
+    current_version = data.pop("version")
+
+    # Ensure no other document already holds the new title
+    try:
+        title_conflict = await questions_col.find_one({"title": data["title"], "_id": {"$ne": obj_id}})
+    except PyMongoError as exc:
+        logger.error("MongoDB error during title conflict check for '%s': %s", data["title"], exc)
+        raise HTTPException(status_code=503, detail="Database unavailable, please retry later") from exc
+
+    if title_conflict:
+        raise HTTPException(status_code=409, detail=f"Another question with title '{data['title']}' already exists.")
+
+    set_fields = {
+        **data,
+        "updated_at": now,
+        "updated_by": admin_email,
+        "version": current_version + 1,
+    }
 
     try:
         doc = await questions_col.find_one_and_update(
-            {"title": title, "version": version},
-            {
-                "$set": set_fields,
-                "$setOnInsert": {"created_at": now, "created_by": admin_email, "title": title},
-            },
-            upsert=True,
+            {"_id": obj_id, "version": current_version},
+            {"$set": set_fields},
             return_document=ReturnDocument.AFTER,
         )
     except PyMongoError as exc:
-        logger.error("MongoDB error during upsert for '%s': %s", title, exc)
-        raise HTTPException(status_code=409, detail="Write conflict — re-fetch the document and retry.") from exc
+        logger.error("MongoDB error during update for id '%s': %s", question_id, exc)
+        raise HTTPException(status_code=503, detail="Database unavailable, please retry later") from exc
 
-    was_inserted = doc.get("created_at") == now
-    if was_inserted:
-        logger.info("Created new question '%s'", title)
-        return {"status": "created", "title": title, "version": 1}
+    if doc is None:
+        # Distinguish between not found and version mismatch
+        try:
+            exists = await questions_col.find_one({"_id": obj_id})
+        except PyMongoError:
+            exists = None
 
-    logger.info("Updated '%s' → version %d", title, version + 1)
-    return {"status": "updated", "title": title, "version": version + 1}
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Question with ID '{question_id}' not found.")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version conflict — document is at version {exists.get('version')}, but version {current_version} was provided. Re-fetch and retry.",
+        )
+
+    logger.info("Updated question id '%s' → version %d by %s", question_id, current_version + 1, admin_email)
+    return {"status": "updated", "id": question_id, "title": doc.get("title"), "version": current_version + 1}
 
 @app.delete("/delete", status_code=200)
 async def delete_question(
