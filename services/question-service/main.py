@@ -39,6 +39,9 @@ questions_col = db.questions
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024  # 4 MB
+MAX_IMAGES = 3
+
 class CreateQuestionSchema(BaseModel):
     title: str = Field(..., max_length=100)
     description: str = Field(..., max_length=2000)
@@ -47,6 +50,7 @@ class CreateQuestionSchema(BaseModel):
     difficulty: str
     model_answer_code: Optional[str] = None
     model_answer_lang: Optional[str] = None
+    images: List[str] = Field(default=[], description="Base64-encoded images, max 3, each up to 4 MB")
 
     @field_validator('difficulty', mode='before')
     def validate_difficulty(cls, v):
@@ -85,6 +89,21 @@ async def get_current_admin(token: str = Depends(oauth2_scheme)):
     return "admin@cloud-idp.com"  # Mocked for implementation
 
 
+def validate_images(images: list[str]) -> None:
+    """Raises HTTPException if image list exceeds count or per-image size limits."""
+    if len(images) > MAX_IMAGES:
+        raise HTTPException(status_code=400, detail=f"Too many images — maximum {MAX_IMAGES} allowed.")
+    for i, img in enumerate(images):
+        # Strip a data URI prefix if present (e.g. "data:image/png;base64,...")
+        raw = img.split(",", 1)[-1] if img.startswith("data:") else img
+        try:
+            decoded_size = len(base64.b64decode(raw, validate=True))
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Image {i + 1} is not valid base64.")
+        if decoded_size > MAX_IMAGE_SIZE_BYTES:
+            raise HTTPException(status_code=400, detail=f"Image {i + 1} exceeds the 4 MB limit.")
+
+
 @app.post("/create", status_code=201)
 async def create_question(
     qn: CreateQuestionSchema,
@@ -95,6 +114,7 @@ async def create_question(
     """
     if qn.model_answer_code and len(qn.model_answer_code.encode()) > 1_000_000:
         raise HTTPException(status_code=400, detail="Model answer code exceeds 1 MB")
+    validate_images(qn.images)
 
     now = datetime.now(timezone.utc).isoformat()
     data = qn.model_dump()
@@ -138,6 +158,7 @@ async def update_question(
 
     if qn.model_answer_code and len(qn.model_answer_code.encode()) > 1_000_000:
         raise HTTPException(status_code=400, detail="Model answer code exceeds 1 MB")
+    validate_images(qn.images)
 
     try:
         obj_id = ObjectId(question_id)
