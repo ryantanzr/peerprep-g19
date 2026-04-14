@@ -59,12 +59,14 @@ function FindingMatchContent() {
         setQueuePosition(position);
         setQueueLength(length);
       },
-      onMatchFound: async (peerEmail) => {
+      onMatchFound: async (peerId, matchedAt) => {
         cleanup();
         setMatchFound(true);
 
         try {
-          const sessionId = await generateSessionId(userEmail, peerEmail);
+          // peerId is a Firebase UID from the match service — use user.id (also a UID)
+          // so both matched users compute the same deterministic session ID
+          const sessionId = await generateSessionId(user!.id, peerId, matchedAt);
           const question = await fetchDeterministicQuestion(topic, difficulty, sessionId);
           const questionParam = question
             ? encodeURIComponent(question.title)

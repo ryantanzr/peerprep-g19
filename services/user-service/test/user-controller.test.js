@@ -41,7 +41,7 @@ describe("user-controller", () => {
     await updateUser(req, res);
 
     expect(res.statusCode).toBe(400);
-    expect(res.body).toEqual({ message: "username is missing!" });
+    expect(res.body).toEqual({ message: "Username is missing!" });
   });
 
   it("updateUser returns 200 when username update succeeds", async () => {
@@ -82,6 +82,7 @@ describe("user-controller", () => {
     });
     repositoryMocks.updateUserPrivilegeById.mockResolvedValueOnce({
       id: "507f1f77bcf86cd799439011",
+      firebaseuuid: "firebase-uid-1",
       username: "john",
       email: "john@example.com",
       role: "admin",

@@ -24,35 +24,35 @@ describe("question API", () => {
   });
 
   describe("listQuestions", () => {
-    it("calls GET /api/questions-list with no params by default", async () => {
+    it("calls GET /api/questions with no params by default", async () => {
       mockApiFetch.mockResolvedValue({ data: [], total: 0, skip: 0, limit: 20, hasMore: false });
       const result = await listQuestions();
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-list");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions");
       expect(result.data).toEqual([]);
     });
 
     it("passes skip and limit as query params", async () => {
       mockApiFetch.mockResolvedValue({ data: [], total: 0, skip: 10, limit: 5, hasMore: false });
       await listQuestions({ skip: 10, limit: 5 });
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-list?skip=10&limit=5");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions?skip=10&limit=5");
     });
 
     it("passes search param", async () => {
       mockApiFetch.mockResolvedValue({ data: [], total: 0, skip: 0, limit: 20, hasMore: false });
       await listQuestions({ search: "two sum" });
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-list?search=two+sum");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions?search=two+sum");
     });
 
     it("passes difficulty param", async () => {
       mockApiFetch.mockResolvedValue({ data: [], total: 0, skip: 0, limit: 20, hasMore: false });
       await listQuestions({ difficulty: "Hard" });
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-list?difficulty=Hard");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions?difficulty=Hard");
     });
 
     it("passes topic param", async () => {
       mockApiFetch.mockResolvedValue({ data: [], total: 0, skip: 0, limit: 20, hasMore: false });
       await listQuestions({ topic: "Arrays" });
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-list?topic=Arrays");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions?topic=Arrays");
     });
 
     it("combines multiple params", async () => {
@@ -69,45 +69,55 @@ describe("question API", () => {
     it("omits empty string params", async () => {
       mockApiFetch.mockResolvedValue({ data: [], total: 0, skip: 0, limit: 20, hasMore: false });
       await listQuestions({ search: "", difficulty: "" });
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-list");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions");
     });
   });
 
   describe("getQuestionStats", () => {
-    it("calls GET /api/questions-stats", async () => {
+    it("calls GET /api/questions/stats", async () => {
       const stats = { total: 10, difficulty_counts: { Easy: 5 }, topics: ["Arrays"] };
       mockApiFetch.mockResolvedValue(stats);
       const result = await getQuestionStats();
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-stats");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions/stats");
       expect(result).toEqual(stats);
     });
   });
 
   describe("getQuestion", () => {
-    it("calls GET /api/questions-get/:title with encoded title", async () => {
+    it("calls GET /api/questions/:title with encoded title", async () => {
       mockApiFetch.mockResolvedValue({ title: "Two Sum" });
       await getQuestion("Two Sum");
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-get/Two%20Sum");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions/Two%20Sum");
     });
   });
 
   describe("upsertQuestion", () => {
-    it("calls POST /api/questions-upsert with question data", async () => {
+    it("calls POST /api/questions/create for new questions", async () => {
       const data = { title: "Q1", description: "desc", topics: ["Arrays"], difficulty: "Easy" as const };
       mockApiFetch.mockResolvedValue({});
       await upsertQuestion(data);
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-upsert", {
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions/create", {
         method: "POST",
+        body: JSON.stringify(data),
+      });
+    });
+
+    it("calls PUT /api/questions/update/:id for existing questions", async () => {
+      const data = { _id: "abc123", title: "Q1", description: "desc", topics: ["Arrays"], difficulty: "Easy" as const };
+      mockApiFetch.mockResolvedValue({});
+      await upsertQuestion(data);
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions/update/abc123", {
+        method: "PUT",
         body: JSON.stringify(data),
       });
     });
   });
 
   describe("deleteQuestion", () => {
-    it("calls DELETE /api/questions-delete with title", async () => {
+    it("calls DELETE /api/questions/delete with title", async () => {
       mockApiFetch.mockResolvedValue({});
       await deleteQuestion("Q1");
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-delete", {
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions/delete", {
         method: "DELETE",
         body: JSON.stringify({ title: "Q1" }),
       });
@@ -115,10 +125,10 @@ describe("question API", () => {
   });
 
   describe("fetchRandomQuestion", () => {
-    it("calls GET /api/questions-fetch with query params", async () => {
+    it("calls GET /api/questions/fetch with query params", async () => {
       mockApiFetch.mockResolvedValue({ title: "Q" });
       await fetchRandomQuestion("Arrays,DP", "Medium");
-      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions-fetch?topics=Arrays%2CDP&difficulty=Medium");
+      expect(mockApiFetch).toHaveBeenCalledWith("/api/questions/fetch?topics=Arrays%2CDP&difficulty=Medium");
     });
   });
 
@@ -128,18 +138,17 @@ describe("question API", () => {
         data: [makeQuestion("Two Sum", ["Arrays"], "Easy")],
         total: 1,
         skip: 0,
-        limit: 500,
+        limit: 100,
         hasMore: false,
       });
 
       const result = await fetchDeterministicQuestion("Arrays", "Easy", "0000000000000000");
       expect(result).not.toBeNull();
       expect(result!.title).toBe("Two Sum");
-      // Verify it passed topic and difficulty to the API
       const calledUrl = mockApiFetch.mock.calls[0][0] as string;
       expect(calledUrl).toContain("topic=Arrays");
       expect(calledUrl).toContain("difficulty=Easy");
-      expect(calledUrl).toContain("limit=500");
+      expect(calledUrl).toContain("limit=100");
     });
 
     it("returns null when no questions match", async () => {
@@ -147,7 +156,7 @@ describe("question API", () => {
         data: [],
         total: 0,
         skip: 0,
-        limit: 500,
+        limit: 100,
         hasMore: false,
       });
 
@@ -165,7 +174,7 @@ describe("question API", () => {
         data: questions,
         total: 3,
         skip: 0,
-        limit: 500,
+        limit: 100,
         hasMore: false,
       });
 
@@ -184,7 +193,7 @@ describe("question API", () => {
         data: [...questions],
         total: 3,
         skip: 0,
-        limit: 500,
+        limit: 100,
         hasMore: false,
       };
 
@@ -208,7 +217,7 @@ describe("question API", () => {
         data: [...questions],
         total: 3,
         skip: 0,
-        limit: 500,
+        limit: 100,
         hasMore: false,
       });
       const a = await fetchDeterministicQuestion("Arrays", "Easy", "0000000100000000");
@@ -217,12 +226,25 @@ describe("question API", () => {
         data: [...questions],
         total: 3,
         skip: 0,
-        limit: 500,
+        limit: 100,
         hasMore: false,
       });
       const b = await fetchDeterministicQuestion("Arrays", "Easy", "0000000200000000");
 
       expect(a!.title).not.toBe(b!.title);
+    });
+
+    it("paginates when hasMore is true", async () => {
+      const page1 = Array.from({ length: 100 }, (_, i) => makeQuestion(`Q${String(i).padStart(3, "0")}`, ["Arrays"], "Easy"));
+      const page2 = [makeQuestion("Q100", ["Arrays"], "Easy")];
+
+      mockApiFetch
+        .mockResolvedValueOnce({ data: page1, total: 101, skip: 0, limit: 100, hasMore: true })
+        .mockResolvedValueOnce({ data: page2, total: 101, skip: 100, limit: 100, hasMore: false });
+
+      const result = await fetchDeterministicQuestion("Arrays", "Easy", "0000000000000000");
+      expect(mockApiFetch).toHaveBeenCalledTimes(2);
+      expect(result).not.toBeNull();
     });
   });
 });

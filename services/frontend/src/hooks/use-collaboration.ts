@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as Y from "yjs";
-import YPartyKitProvider from "y-partykit/provider";
+import { WebsocketProvider } from "y-websocket";
 import type { Awareness } from "y-protocols/awareness";
 import { getToken } from "@/lib/auth";
 import type { SupportedLanguage, ServerMessage } from "@/types/collaboration";
@@ -38,17 +38,21 @@ export function useCollaboration({ sessionId, userId, username }: UseCollaborati
     partnerDisconnected: false,
   });
 
-  const providerRef = useRef<YPartyKitProvider | null>(null);
+  const providerRef = useRef<WebsocketProvider | null>(null);
   const docRef = useRef<Y.Doc | null>(null);
 
   useEffect(() => {
     const doc = new Y.Doc();
     docRef.current = doc;
 
-    const partykitHost = process.env.NEXT_PUBLIC_PARTYKIT_HOST || "localhost:1999";
-    const token = getToken() || "";
+    const host = process.env.NEXT_PUBLIC_PARTYKIT_HOST || "localhost:1999";
+    const token = getToken();
+    if (!token) {
+      console.error("No auth token available — cannot connect to collaboration server");
+      return () => { doc.destroy(); };
+    }
 
-    const provider = new YPartyKitProvider(partykitHost, sessionId, doc, {
+    const provider = new WebsocketProvider(`ws://${host}`, sessionId, doc, {
       connect: true,
       params: { token },
     });
@@ -111,15 +115,22 @@ export function useCollaboration({ sessionId, userId, username }: UseCollaborati
       }
     };
 
-    // Intercept websocket messages for our custom protocol
+    // Intercept websocket messages: route text frames to our custom handler,
+    // binary frames to y-websocket. This prevents y-websocket from trying to
+    // decode JSON strings as Yjs binary messages.
     const attachMessageListener = () => {
       if (provider.ws) {
-        const prevHandler = provider.ws.onmessage;
+        const yjsHandler = provider.ws.onmessage;
         provider.ws.onmessage = (event: MessageEvent) => {
-          if (prevHandler) {
-            (prevHandler as (event: MessageEvent) => void)(event);
+          if (typeof event.data === "string") {
+            // Text frame → custom JSON protocol (join, language, etc.)
+            onMessage(event);
+            return;
           }
-          onMessage(event);
+          // Binary frame → Yjs sync protocol
+          if (yjsHandler) {
+            (yjsHandler as (event: MessageEvent) => void)(event);
+          }
         };
       }
     };

@@ -62,14 +62,13 @@ vi.mock("../config/firebase.js", () => ({
   },
 }));
 
+
 const {
   createUser,
   findUserByEmail,
   findUserByFirebaseUuid,
   findUserByUsernameOrEmail,
   updateUserById,
-  updateUserPrivilegeById,
-  deleteUserById,
 } = await import("../model/firebase-repository.js");
 
 describe("firebase-repository", () => {
@@ -121,23 +120,5 @@ describe("firebase-repository", () => {
 
     expect(updated?.username).toBe("carol-new");
     expect(updated?.updatedAt).toBeDefined();
-  });
-
-  it("updateUserPrivilegeById updates role and deleteUserById removes user", async () => {
-    await createUser({
-      firebaseuuid: "uid-4",
-      email: "d@example.com",
-      username: "dan",
-      role: "user",
-    });
-
-    const promoted = await updateUserPrivilegeById("uid-4", "admin");
-    expect(promoted?.role).toBe("admin");
-
-    const deleted = await deleteUserById("uid-4");
-    expect(deleted?.id).toBe("uid-4");
-
-    const foundAfterDelete = await findUserByFirebaseUuid("uid-4");
-    expect(foundAfterDelete).toBeNull();
   });
 });

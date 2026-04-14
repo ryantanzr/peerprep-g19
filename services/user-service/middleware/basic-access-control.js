@@ -1,4 +1,5 @@
 import admin from "../config/firebase.js";
+import { USER_ROLES } from "../constants/roles.js";
 
 export const verifyAccessToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -19,7 +20,7 @@ export const verifyAccessToken = async (req, res, next) => {
 };
 
 export const verifyIsAdmin = (req, res, next) => {
-  if (req.user?.role !== "admin") {
+  if (req.user?.role !== USER_ROLES.ADMIN) {
     return res
       .status(403)
       .json({ message: "Not authorized to access this resource" });
@@ -28,7 +29,7 @@ export const verifyIsAdmin = (req, res, next) => {
 };
 
 export const verifyUserOrAdmin = (req, res, next) => {
-  const validRoles = ["user", "admin"];
+  const validRoles = [USER_ROLES.USER, USER_ROLES.ADMIN];
   if (!validRoles.includes(req.user?.role)) {
     return res.status(403).json({ message: "Access required" });
   }
@@ -36,7 +37,7 @@ export const verifyUserOrAdmin = (req, res, next) => {
 };
 
 export const verifyIsOwnerOrAdmin = async (req, res, next) => {
-  if (req.user?.role === "admin") {
+  if (req.user?.role === USER_ROLES.ADMIN) {
     return next();
   }
 

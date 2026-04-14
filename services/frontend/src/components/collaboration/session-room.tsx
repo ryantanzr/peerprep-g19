@@ -11,6 +11,7 @@ import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { getQuestion } from "@/lib/api/question";
 import { createAttempt } from "@/lib/api/user";
+import { explainCode, type AIExplainResult } from "@/lib/api/ai";
 import {
   SUPPORTED_LANGUAGES,
   LANGUAGE_LABELS,
@@ -34,6 +35,9 @@ function SessionContent() {
   const [question, setQuestion] = useState<Question | null>(null);
   const [showEndModal, setShowEndModal] = useState(false);
   const [expandedHint, setExpandedHint] = useState<number | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<AIExplainResult | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const sessionStartRef = useRef<number>(Date.now());
 
   const {
@@ -60,7 +64,6 @@ function SessionContent() {
     getQuestion(questionTitle)
       .then(setQuestion)
       .catch(() => {
-        // TODO: PLACEHOLDER — Use question data from matching service instead of fetching
         setQuestion({
           _id: "mock",
           title: questionTitle,
@@ -111,11 +114,37 @@ function SessionContent() {
     }
   }, [partnerDisconnected, toast]);
 
+  const handleExplainCode = async () => {
+    if (!ytext || !ytext.toString().trim()) {
+      setAiError("Please write some code first");
+      return;
+    }
+
+    setAiLoading(true);
+    setAiError(null);
+    setAiResult(null);
+
+    try {
+      const result = await explainCode({
+        code: ytext.toString(),
+        language,
+        questionTitle: questionTitle || "unknown",
+        focus: "general",
+      });
+      setAiResult(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to explain code";
+      setAiError(message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const handleEndSession = async () => {
     setShowEndModal(false);
-    await saveAttempt();
     endSession();
     toast("Session ended", "info");
+    await saveAttempt();
     setTimeout(() => router.push("/match"), 1000);
   };
 
@@ -156,6 +185,81 @@ function SessionContent() {
               <Badge variant="difficulty" difficulty={question.difficulty} className="mb-4">
                 {question.difficulty}
               </Badge>
+
+              {/* AI Assist Panel */}
+              <div className="mb-6 rounded-md border border-gray-200 bg-gray-50 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-800">AI Assist</h3>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExplainCode}
+                    disabled={aiLoading}
+                  >
+                    {aiLoading ? "Explaining..." : "Explain My Code"}
+                  </Button>
+                </div>
+
+                {aiError && (
+                  <div className="mb-3 rounded bg-red-50 p-2 text-xs text-red-700">
+                    {aiError}
+                  </div>
+                )}
+
+                {aiResult && (
+                  <div className="space-y-3 text-xs text-gray-700">
+                    <div>
+                      <p className="font-semibold text-gray-800 mb-1">Summary</p>
+                      <p className="text-gray-600">{aiResult.summary}</p>
+                    </div>
+
+                    {aiResult.stepByStep.length > 0 && (
+                      <div>
+                        <p className="font-semibold text-gray-800 mb-1">Step by Step</p>
+                        <ul className="list-disc pl-5 space-y-1 text-gray-600">
+                          {aiResult.stepByStep.map((step, i) => (
+                            <li key={i}>{step}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {aiResult.keyConcepts.length > 0 && (
+                      <div>
+                        <p className="font-semibold text-gray-800 mb-1">Key Concepts</p>
+                        <div className="flex flex-wrap gap-2">
+                          {aiResult.keyConcepts.map((concept, i) => (
+                            <span
+                              key={i}
+                              className="inline-block rounded bg-gray-200 px-2 py-1 text-xs text-gray-700"
+                            >
+                              {concept}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {aiResult.potentialIssues.length > 0 && (
+                      <div>
+                        <p className="font-semibold text-gray-800 mb-1">Potential Issues</p>
+                        <ul className="list-disc pl-5 space-y-1 text-gray-600">
+                          {aiResult.potentialIssues.map((issue, i) => (
+                            <li key={i}>{issue}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div>
+                      <p className="font-semibold text-gray-800 mb-1">Confidence</p>
+                      <p className="text-gray-600">
+                        {(aiResult.confidence * 100).toFixed(0)}%
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="prose prose-sm max-w-none mb-6">
                 <p className="whitespace-pre-wrap text-gray-700">{question.description}</p>

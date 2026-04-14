@@ -7,6 +7,8 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   sendPasswordResetEmail,
+  GoogleAuthProvider,
+  signInWithPopup,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { setToken, clearToken } from "@/lib/auth";
@@ -19,6 +21,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -118,6 +121,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const loginWithGoogle = useCallback(async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      const cred = await signInWithPopup(auth, provider);
+      const idToken = await cred.user.getIdToken();
+      setToken(idToken);
+      
+      // Register user if not exists
+      try {
+        const res = await registerUser(cred.user.displayName || cred.user.email?.split("@")[0] || "user");
+        setUser(res.data);
+      } catch {
+        // User already exists
+      }
+      
+    } catch (err: unknown) {
+      toFirebaseError(err);
+    }
+  }, []);
+
   const logout = useCallback(async () => {
     await signOut(auth);
     clearToken();
@@ -125,7 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, forgotPassword, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, forgotPassword, loginWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   );

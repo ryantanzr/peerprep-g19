@@ -1,11 +1,12 @@
 import "dotenv/config";
 import admin from "../config/firebase.js";
+import { USER_ROLES } from "../constants/roles.js";
 import {
   findUserByFirebaseUuid,
   updateUserPrivilegeById,
 } from "../model/firebase-repository.js";
 
-const setRole = async (uid, role = "admin") => {
+const setRole = async (uid, role = USER_ROLES.ADMIN) => {
   const user = await findUserByFirebaseUuid(uid);
   if (!user) {
     throw new Error(`No Firestore user found for firebaseuuid=${uid}`);

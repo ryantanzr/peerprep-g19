@@ -7,6 +7,22 @@ services/user-service/coverage/
 services/user-service/dist/
 services/user-service/config/service_key.json
 
+services/ai-service/node_modules/
+services/ai-service/.env
+services/ai-service/.env.*
+!services/ai-service/.env.example
+services/ai-service/npm-debug.log*
+services/ai-service/yarn-debug.log*
+services/ai-service/yarn-error.log*
+services/ai-service/pnpm-debug.log*
+services/ai-service/.DS_Store
+services/ai-service/coverage/
+services/ai-service/dist/
+services/ai-service/build/
+services/ai-service/*.log
+services/ai-service/config/service_key.json
+services/ai-service/serviceAccountKey.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

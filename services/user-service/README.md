@@ -1,116 +1,165 @@
-# User Service Guide
+# User Service
 
-## Setting-up
+Microservice responsible for user management, authentication, authorization and attempt tracking.
 
-> 📝 Note: If you are familiar with MongoDB and wish to use a local instance, please feel free to do so via the **[MongoDB Community Edition](https://www.mongodb.com/docs/manual/administration/install-community/)**. This guide utilizes MongoDB Cloud Services.
->
-> ⚠️ Important Network Notice: MongoDB Atlas connections are blocked on the NUS network. If you are using MongoDB Atlas, you must disconnect from the NUS network (including NUS Wi-Fi or nVPN) and connect using an alternative network such as phone hotspot. Otherwise, your application will fail to connect to the database even if your connection string is correct.
+---
 
-1. Set up a MongoDB Cluster by following the steps in this **[guide](./MongoDBSetup.md)**.
+## Overview
 
-2. Set up Firebase Admin for backend authentication/authorization by following this **[guide](./FirebaseSetup.md)**.
+This service handles:
+- User profile management
+- Role based access control
+- Firebase ID token verification
+- User question attempt history
+- Administrative user operations
 
-3. After setting up, go to the **[Clusters](https://cloud.mongodb.com/go?l=https%3A%2F%2Fcloud.mongodb.com%2Fv2%2F%3Cproject%3E%23%2Fclusters)**  Page. You would see a list of the clusters you have set up. Select `Connect` on the cluster you just created earlier on for User Service.
+All authentication is delegated to Firebase Auth. This service does not handle passwords or credentials directly.
 
-    ![alt text](./GuideAssets/ConnectCluster.png)
+---
 
-4. Select the `Drivers` option, as we have to link to a Node.js App (User Service).
+## Running the Service
 
-    ![alt text](./GuideAssets/DriverSelection.png)
+### Prerequisites
+1.  Node.js 20+
+2.  Firebase Admin service account credentials
+3.  Firebase project configured
 
-5. Select `Node.js` in the **Driver** dropdown menu.
-6. Copy the connection string.
+### Local Development
+```bash
+cd services/user-service
 
-    > Note, you may see `<password>` in this connection string. We will be replacing this with the admin account password that we created earlier on when setting up the Cluster.
+# Install dependencies
+npm install
 
-    ![alt text](./GuideAssets/ConnectionString.png)
+# Create environment file
+cp .env.sample .env
+# Edit .env with Firebase credentials
 
-7. In the `user-service` directory, create a copy of the `.env.sample` file and name it `.env`.
-
-8. Update the `DB_CLOUD_URI` of the `.env` file, and paste the string we copied earlier in **step 6**. Also remember to replace the `<db_password>` placeholder with the **actual password**.
-
-8. Ensure the `JWT_SECRET` variable is set in the `.env` file. This is required for generating authentication tokens during login. You can set it to any random string (e.g., `JWT_SECRET=your_secret_key_here`).
-
-> ⚠️ Warning: If the password contains special characters, make sure to URL-encode them before placing them in the connection string. For example, if your password is `P@ssword`, you should replace `@` with `%40`, resulting in `P%40ssword`.
-
-## Running User Service
-
-> 📝 Note: Ensure you have **[Node.js (LTS)](https://nodejs.org/en/download)** installed. At the time of writing, the latest LTS version is `v24.13.0`. Select your operating system, package manager, and Node.js version from the dropdowns at the top of the [page]((https://nodejs.org/en/download)), then follow the provided instructions.
->
-> ⚠️ Minimum Version Requirement: Use Node.js `v20.10.0` or newer. This project uses the `with { type: "json" }` import attributes syntax in `config/firebase.js`, which is not supported in older Node.js versions.
-
-1. Open Command Line/Terminal and navigate into the `user-service` directory.
-
-    ```sh
-    cd user-service
-    ```
-
-2. Install all the necessary dependencies by running the command:
-
-    ```sh
-    npm install
-    ```
-
-3. Start the User Service in production mode by running:
-
-    ```sh
-    npm start
-    ```
-
-Default base URL:
-
-```text
-http://localhost:3001
+# Run in development mode with hot reload
+npm run dev
 ```
+
+Service will be available at: `http://localhost:3001`
 
 ### Run with Docker
-
-From `services/user-service`:
-
-```sh
-docker compose -f compose.yaml up --build
+```bash
+# From project root
+docker compose build user-service
+docker compose up -d user-service
 ```
 
-Important:
-
-- Ensure `config/service_key.json` exists on your machine.
-- The compose file mounts this key into the container at runtime.
-
-To stop:
-
-```sh
-docker compose -f compose.yaml down
+### Health Check
+```bash
+curl http://localhost:3001/
 ```
 
 ---
 
-## Authentication Model
+## Testing
+```bash
+# Run all tests
+npm run test
 
-- Protected routes require Firebase ID token:
+# Run tests in watch mode
+npm run test:watch
 
-```text
+# Run single test file
+npm run test test/user-controller.test.js
+```
+
+---
+
+## Data Storage Architecture
+
+This service uses **Firebase Firestore** for all data storage.
+
+### Collections
+
+| Collection | Purpose |
+|---|---|
+| `users` | User profiles, roles and account information |
+| `question_attempts` | History of all question attempts by users |
+
+### User Document Structure
+```javascript
+{
+  id: "firebase_uid",
+  firebaseuuid: "firebase_uid",
+  email: "user@example.com",
+  username: "exampleuser",
+  role: "user" | "admin",
+  createdAt: Timestamp,
+  updatedAt: Timestamp
+}
+```
+
+### Roles System
+Roles are stored in **two locations**:
+1.  Firestore user document (persistent source of truth)
+2.  Firebase Custom Claims (cached inside JWT tokens for 60 minutes)
+
+All authorization checks across the entire system trust the role value directly from the JWT token without database lookups.
+
+---
+
+## System Invariants
+Protected by atomic Firestore transactions:
+- Cannot delete the last remaining administrator
+- Cannot demote the last remaining administrator
+- All operations are atomic and race condition proof
+
+---
+
+## First Admin Setup
+To create the first admin user:
+```bash
+cd services/user-service
+node scripts/firstAdmin.js <firebase_user_uid>
+```
+
+This will set both Firestore role and Firebase custom claims. Subsequent admins can be created via the API by existing admins.
+
+---
+
+## Authentication
+All protected endpoints require a valid Firebase ID token in the request header:
+```
 Authorization: Bearer <FIREBASE_ID_TOKEN>
 ```
 
-- Service verifies token with Firebase Admin SDK.
-- Authorization uses role custom claim (`admin` or `user`).
+Tokens are verified cryptographically using Firebase Admin SDK without external network calls.
 
 ---
 
-## User Data Model (Firestore)
+## Important Notes
+- Role changes can take up to 60 minutes to propagate to existing tokens
+- Users must log out and log back in to receive new permissions immediately
+- This service has no dependencies on any other PeerPrep service
+- All endpoints are fully stateless
 
-Collection: `users`
+## API Endpoints
 
-Document ID: Firebase UID (`firebaseuuid`)
+### Authentication
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/auth/register` | Create user profile after Firebase authentication |
+| POST | `/auth/forgot-password` | Initiate password reset flow |
 
-Fields:
+### User Management
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| GET | `/users` | Admin | List all users |
+| GET | `/users/:id` | Owner/Admin | Get single user profile |
+| PATCH | `/users/:id` | Owner/Admin | Update user profile |
+| DELETE | `/users/:id` | Owner/Admin | Delete user |
+| PATCH | `/users/:id/privilege` | Admin | Change user role |
 
-- `firebaseuuid` (string)
-- `email` (string)
-- `username` (string)
-- `role` (`admin` | `user`)
-- `createdAt` (timestamp)
-- `updatedAt` (timestamp)
+### Attempt History
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| POST | `/users/:id/attempts` | System | Record question attempt |
+| GET | `/users/:id/attempts` | Owner/Admin | Get paginated attempt history |
+| GET | `/users/:id/attempts/summary` | Owner/Admin | Get user attempt statistics |
 
 ---
 

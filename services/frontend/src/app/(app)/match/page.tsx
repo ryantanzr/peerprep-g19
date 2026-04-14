@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { getAllTopics } from "@/lib/api/question";
 
 const difficulties = ["Easy", "Medium", "Hard"] as const;
-const topics = ["Arrays", "Graphs", "DP", "Trees", "Strings", "Sorting"] as const;
 
 function SelectCard({
   label,
@@ -36,6 +37,35 @@ export default function MatchPage() {
   const router = useRouter();
   const [difficulty, setDifficulty] = useState<string | null>(null);
   const [topic, setTopic] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [topics, setTopics] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchTopics = useCallback(async (searchQuery: string) => {
+    setLoading(true);
+    try {
+      const results = await getAllTopics(searchQuery || undefined);
+      setTopics(results);
+    } catch {
+      // Fallback to empty list on error
+      setTopics([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Debounce search
+    const timer = setTimeout(() => {
+      fetchTopics(search);
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [search, fetchTopics]);
+
+  useEffect(() => {
+    fetchTopics("");
+  }, [fetchTopics]);
 
   const handleStart = () => {
     if (!difficulty || !topic) return;
@@ -63,15 +93,34 @@ export default function MatchPage() {
 
         <div>
           <h2 className="text-sm font-semibold text-gray-700 mb-3">Select Topic</h2>
+          
+          <Input
+            type="text"
+            placeholder="Search topics..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="mb-4"
+          />
+
           <div className="grid grid-cols-3 gap-3">
-            {topics.map((t) => (
-              <SelectCard
-                key={t}
-                label={t}
-                selected={topic === t}
-                onClick={() => setTopic(t)}
-              />
-            ))}
+            {loading ? (
+              <div className="col-span-3 py-8 text-center text-gray-500 text-sm">
+                Loading topics...
+              </div>
+            ) : topics.length === 0 ? (
+              <div className="col-span-3 py-8 text-center text-gray-500 text-sm">
+                No topics found
+              </div>
+            ) : (
+              topics.map((t) => (
+                <SelectCard
+                  key={t}
+                  label={t}
+                  selected={topic === t}
+                  onClick={() => setTopic(t)}
+                />
+              ))
+            )}
           </div>
         </div>
 

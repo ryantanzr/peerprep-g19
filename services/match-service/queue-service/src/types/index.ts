@@ -19,6 +19,7 @@ export interface QueueUpdateEvent {
 export interface MatchFoundEvent {
   type: 'MATCH_FOUND';
   peer: string;
+  matchedAt: number;
 }
 
 export interface TimeoutEvent {

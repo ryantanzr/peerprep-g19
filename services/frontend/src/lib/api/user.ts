@@ -53,3 +53,49 @@ export async function createAttempt(userId: string, payload: CreateAttemptPayloa
     body: JSON.stringify(payload),
   });
 }
+
+export interface Attempt {
+  id: string;
+  questionTitle: string;
+  topic: string;
+  difficulty: string;
+  status: string;
+  durationSeconds: number | null;
+  language: string | null;
+  sessionId: string | null;
+  attemptedAt: { _seconds: number; _nanoseconds: number } | string;
+}
+
+export interface AttemptHistoryResponse {
+  message: string;
+  data: Attempt[];
+  pagination: { limit: number; nextCursor: string | null };
+}
+
+export interface AttemptSummary {
+  totalAttempts: number;
+  solvedCount: number;
+  attemptedCount: number;
+  abandonedCount: number;
+  solvedRate: number;
+  byTopic: Record<string, number>;
+  byDifficulty: Record<string, number>;
+}
+
+export async function getAttemptHistory(
+  userId: string,
+  params?: { limit?: number; cursor?: string; topic?: string; difficulty?: string; status?: string },
+): Promise<AttemptHistoryResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.cursor) searchParams.set("cursor", params.cursor);
+  if (params?.topic) searchParams.set("topic", params.topic);
+  if (params?.difficulty) searchParams.set("difficulty", params.difficulty);
+  if (params?.status) searchParams.set("status", params.status);
+  const qs = searchParams.toString();
+  return apiFetch(`/api/users/${userId}/attempts${qs ? `?${qs}` : ""}`);
+}
+
+export async function getAttemptSummary(userId: string): Promise<{ message: string; data: AttemptSummary }> {
+  return apiFetch(`/api/users/${userId}/attempts/summary`);
+}

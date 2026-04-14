@@ -22,12 +22,20 @@ export function addUser(
   connId: string,
   userId: string,
   username: string,
-): { ok: true } | { ok: false; error: string } {
+): { ok: true; replacedConnId?: string } | { ok: false; error: string } {
   if (state.ended) return { ok: false, error: "Session has ended" };
-  if (state.users.size >= MAX_USERS) return { ok: false, error: "Session full" };
 
-  // TODO: PLACEHOLDER — Track active sessions per user globally (needs Redis or external store)
-  // Currently a user could join multiple rooms in separate tabs
+  // If the same userId is already in the session (e.g., browser refresh),
+  // replace the stale connection instead of rejecting as "Session full"
+  for (const [existingConnId, existingUser] of state.users) {
+    if (existingUser.userId === userId) {
+      state.users.delete(existingConnId);
+      state.users.set(connId, { userId, username, connectionId: connId });
+      return { ok: true, replacedConnId: existingConnId };
+    }
+  }
+
+  if (state.users.size >= MAX_USERS) return { ok: false, error: "Session full" };
 
   state.users.set(connId, { userId, username, connectionId: connId });
   return { ok: true };

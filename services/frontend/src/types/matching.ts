@@ -1,13 +1,13 @@
 export interface QueueUpdateEvent {
   type: "QUEUE_UPDATE";
   position: number;
-  top5: string[];
   queueLength: number;
 }
 
 export interface MatchFoundEvent {
   type: "MATCH_FOUND";
   peer: string;
+  matchedAt: number;
 }
 
 export interface TimeoutEvent {

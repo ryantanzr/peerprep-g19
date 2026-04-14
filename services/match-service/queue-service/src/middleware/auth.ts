@@ -19,8 +19,19 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
     return;
   }
 
-  // STUB: token is treated as userId directly.
-  // Replace this block with Firebase Admin SDK verification later.
-  req.userId = token;
+  // Decode Firebase JWT payload to extract uid (sub claim).
+  // This is a lightweight check — signature verification is handled by
+  // downstream services that have the Firebase Admin SDK.
+  try {
+    const payloadB64 = token.split('.')[1];
+    if (!payloadB64) throw new Error('Malformed token');
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+    if (!payload.sub) throw new Error('Missing sub claim');
+    req.userId = payload.sub;
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
+    return;
+  }
+
   next();
 }

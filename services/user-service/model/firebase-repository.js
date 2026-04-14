@@ -1,4 +1,5 @@
 import admin from "../config/firebase.js";
+import { USER_ROLES } from "../constants/roles.js";
 
 function usersRef() {
   return admin.firestore().collection("users");
@@ -44,7 +45,7 @@ export async function createUser(userData) {
     firebaseuuid: userData.firebaseuuid,
     email: userData.email,
     username: userData.username,
-    role: userData.role || "user",
+    role: userData.role || USER_ROLES.USER,
     createdAt: now,
     updatedAt: now,
   };
@@ -107,21 +108,105 @@ export async function updateUserById(userId, updates) {
   return updateUserByUuid(userId, updates);
 }
 
+/**
+ * Update user role privilege with atomic transaction safety
+ * 
+ * Enforces system invariants:
+ * - Cannot demote the last remaining admin
+ * - Admin cannot demote themselves
+ * 
+ * Runs inside Firestore transaction to eliminate race conditions
+ * 
+ * @param {string} userId User ID to update
+ * @param {string} role New role to assign
+ * @returns {Promise<Object>} Updated user document
+ * @throws {Error} If operation violates system invariants
+ */
 export async function updateUserPrivilegeById(userId, role) {
-  return updateUserByUuid(userId, { role });
+  return admin.firestore().runTransaction(async transaction => {
+    const userRef = usersRef().doc(userId);
+    const userSnapshot = await transaction.get(userRef);
+
+    if (!userSnapshot.exists) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    const user = userSnapshot.data();
+    const currentRole = user.role;
+    const isCurrentlyAdmin = currentRole === USER_ROLES.ADMIN;
+    const willBeAdmin = role === USER_ROLES.ADMIN;
+
+    // Only need to check invariants when removing admin privileges
+    if (isCurrentlyAdmin && !willBeAdmin) {
+      // Count total admins in system
+      const adminSnapshot = await transaction.get(
+        usersRef().where('role', '==', USER_ROLES.ADMIN)
+      );
+
+      const adminCount = adminSnapshot.size;
+
+      if (adminCount <= 1) {
+        throw new Error("Cannot remove the last remaining administrator from the system");
+      }
+    }
+
+    transaction.update(userRef, {
+      role,
+      updatedAt: new Date()
+    });
+
+    // Return updated user data
+    return {
+      id: userId,      ...user,
+      role,
+      updatedAt: new Date()
+    };
+  });
 }
 
-export async function promoteUser(firebaseuuid) {
-  return updateUserByUuid(firebaseuuid, { role: "admin" });
-}
-
+/**
+ * Delete user with atomic transaction safety
+ * 
+ * Enforces system invariants:
+ * - Cannot delete the last remaining admin
+ * 
+ * Runs inside Firestore transaction to eliminate race conditions
+ * 
+ * @param {string} firebaseuuid User UUID to delete
+ * @returns {Promise<Object|null>} Deleted user document or null if not found
+ * @throws {Error} If operation violates system invariants
+ */
 export async function deleteUserByUuid(firebaseuuid) {
   if (!firebaseuuid) return null;
-  const existing = await findUserByFirebaseUuid(firebaseuuid);
-  if (!existing) return null;
 
-  await usersRef().doc(firebaseuuid).delete();
-  return existing;
+  return admin.firestore().runTransaction(async transaction => {
+    const userRef = usersRef().doc(firebaseuuid);
+    const userSnapshot = await transaction.get(userRef);
+
+    if (!userSnapshot.exists) {
+      return null;
+    }
+
+    const user = userSnapshot.data();
+
+    // Only need to check invariants when deleting an admin user
+    if (user.role === USER_ROLES.ADMIN) {
+      // Count total admins in system
+      const adminSnapshot = await transaction.get(
+        usersRef().where('role', '==', USER_ROLES.ADMIN)
+      );
+
+      const adminCount = adminSnapshot.size;
+
+      if (adminCount <= 1) {
+        throw new Error("Cannot delete the last remaining administrator from the system");
+      }
+    }
+
+    transaction.delete(userRef);
+
+    return normalizeUser(userSnapshot);
+  });
 }
 
 export async function deleteUserById(userId) {
@@ -136,14 +221,14 @@ export async function createQuestionAttempt(userId, attemptData) {
   const now = new Date();
   const payload = {
     userId,
-    questionId: attemptData.questionId || null,
+    questionId: attemptData.questionId ?? null,
     questionTitle: attemptData.questionTitle,
     topic: attemptData.topic,
     difficulty: attemptData.difficulty,
     status: attemptData.status || "attempted",
-    durationSeconds: attemptData.durationSeconds || null,
-    language: attemptData.language || null,
-    sessionId: attemptData.sessionId || null,
+    durationSeconds: attemptData.durationSeconds ?? null,
+    language: attemptData.language ?? null,
+    sessionId: attemptData.sessionId ?? null,
     attemptedAt: now,
     createdAt: now,
   };

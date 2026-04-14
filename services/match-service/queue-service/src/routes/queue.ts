@@ -131,8 +131,8 @@ router.get('/join', authenticate, async (req: AuthRequest, res: Response) => {
   // --- 6. Listen for match events from the match worker ---
   const onMessage = async (channel: string, message: string) => {
     if (channel === matchChannel) {
-      const { peer } = JSON.parse(message) as { peer: string };
-      sendEvent(userId, { type: 'MATCH_FOUND', peer });
+      const { peer, matchedAt } = JSON.parse(message) as { peer: string; matchedAt: number };
+      sendEvent(userId, { type: 'MATCH_FOUND', peer, matchedAt });
       await cleanup('matched');
     }
   };

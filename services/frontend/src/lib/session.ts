@@ -1,11 +1,11 @@
 /**
  * Generate a deterministic session ID from two email addresses.
  * Both users independently compute the same ID regardless of order.
- * Includes a 5-minute time bucket to avoid collisions on repeat matches.
+ * Uses a shared matchedAt timestamp from the server to avoid time-bucket boundary races.
  */
-export async function generateSessionId(email1: string, email2: string): Promise<string> {
+export async function generateSessionId(email1: string, email2: string, matchedAt: number): Promise<string> {
   const sorted = [email1.toLowerCase(), email2.toLowerCase()].sort();
-  const timeBucket = Math.floor(Date.now() / 300_000); // 5-minute window
+  const timeBucket = Math.floor(matchedAt / 300_000); // 5-minute window
   const input = `${sorted.join(":")}:${timeBucket}`;
 
   const data = new TextEncoder().encode(input);

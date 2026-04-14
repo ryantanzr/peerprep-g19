@@ -14,7 +14,7 @@ describe("parseSSEChunk", () => {
   it("parses multiple SSE frames", () => {
     const raw =
       'data: {"type":"QUEUE_UPDATE","position":1,"top5":["a"],"queueLength":3}\n\n' +
-      'data: {"type":"MATCH_FOUND","peer":"bob@test.com"}\n\n';
+      'data: {"type":"MATCH_FOUND","peer":"bob@test.com","matchedAt":1700000000000}\n\n';
     const { events, remainder } = parseSSEChunk(raw);
     expect(events).toHaveLength(2);
     expect(JSON.parse(events[0])).toEqual({
@@ -26,6 +26,7 @@ describe("parseSSEChunk", () => {
     expect(JSON.parse(events[1])).toEqual({
       type: "MATCH_FOUND",
       peer: "bob@test.com",
+      matchedAt: 1700000000000,
     });
     expect(remainder).toBe("");
   });
@@ -105,17 +106,13 @@ describe("connectToMatchingQueue", () => {
     vi.restoreAllMocks();
   });
 
-  it("calls leaveQueue before connecting then fires onQueueUpdate", async () => {
-    // First call: leaveQueue (POST /queue/leave)
-    // Second call: join (POST /queue/join) returning SSE stream
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true }) // leaveQueue
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: {"type":"QUEUE_UPDATE","position":2,"top5":["a","b"],"queueLength":5}\n\n',
-        ]),
-      });
+  it("fires onQueueUpdate when QUEUE_UPDATE event is received", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([
+        'data: {"type":"QUEUE_UPDATE","position":2,"top5":["a","b"],"queueLength":5}\n\n',
+      ]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -126,26 +123,21 @@ describe("connectToMatchingQueue", () => {
 
     connectToMatchingQueue("Arrays", "Easy", token, callbacks);
 
-    // Wait for async operations
     await vi.waitFor(() => {
       expect(callbacks.onQueueUpdate).toHaveBeenCalledWith(2, 5);
     });
 
-    // Verify leaveQueue was called first
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(fetchSpy.mock.calls[0][0]).toContain("/queue/leave");
-    expect(fetchSpy.mock.calls[1][0]).toContain("/queue/join");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toContain("/api/v1/queue/join");
   });
 
   it("fires onMatchFound when MATCH_FOUND event is received", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: {"type":"MATCH_FOUND","peer":"bob@test.com"}\n\n',
-        ]),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([
+        'data: {"type":"MATCH_FOUND","peer":"bob@test.com","matchedAt":1700000000000}\n\n',
+      ]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -157,20 +149,18 @@ describe("connectToMatchingQueue", () => {
     connectToMatchingQueue("Arrays", "Easy", token, callbacks);
 
     await vi.waitFor(() => {
-      expect(callbacks.onMatchFound).toHaveBeenCalledWith("bob@test.com");
+      expect(callbacks.onMatchFound).toHaveBeenCalledWith("bob@test.com", 1700000000000);
     });
     expect(callbacks.onError).not.toHaveBeenCalled();
   });
 
   it("fires onTimeout when TIMEOUT event is received", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: {"type":"TIMEOUT"}\n\n',
-        ]),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([
+        'data: {"type":"TIMEOUT"}\n\n',
+      ]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -188,13 +178,11 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("fires onError on non-ok HTTP response", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true }) // leaveQueue
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        json: () => Promise.resolve({ error: "Already in queue" }),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: "Already in queue" }),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -212,13 +200,11 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("fires onError with HTTP status fallback when JSON parse fails", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: () => Promise.reject(new Error("parse failed")),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.reject(new Error("parse failed")),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -236,12 +222,10 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("fires onError when response has no body", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: null,
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: null,
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -260,9 +244,7 @@ describe("connectToMatchingQueue", () => {
 
   it("silently ignores AbortError from fetch", async () => {
     const abortError = new DOMException("The operation was aborted.", "AbortError");
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true }) // leaveQueue
-      .mockRejectedValueOnce(abortError);
+    fetchSpy.mockRejectedValueOnce(abortError);
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -273,15 +255,12 @@ describe("connectToMatchingQueue", () => {
 
     connectToMatchingQueue("Arrays", "Easy", token, callbacks);
 
-    // Give it time to process
     await new Promise((r) => setTimeout(r, 50));
     expect(callbacks.onError).not.toHaveBeenCalled();
   });
 
   it("fires onError on non-abort fetch failure", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockRejectedValueOnce(new Error("Network failure"));
+    fetchSpy.mockRejectedValueOnce(new Error("Network failure"));
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -299,9 +278,7 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("fires onError for non-Error fetch rejection", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockRejectedValueOnce("string error");
+    fetchSpy.mockRejectedValueOnce("string error");
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -319,14 +296,12 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("does not fire onError when stream closes after MATCH_FOUND", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: {"type":"MATCH_FOUND","peer":"x@y.com"}\n\n',
-        ]),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([
+        'data: {"type":"MATCH_FOUND","peer":"x@y.com","matchedAt":1700000000000}\n\n',
+      ]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -340,20 +315,17 @@ describe("connectToMatchingQueue", () => {
     await vi.waitFor(() => {
       expect(callbacks.onMatchFound).toHaveBeenCalled();
     });
-    // Give time for stream close
     await new Promise((r) => setTimeout(r, 50));
     expect(callbacks.onError).not.toHaveBeenCalled();
   });
 
   it("does not fire onError when stream closes after TIMEOUT", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: {"type":"TIMEOUT"}\n\n',
-        ]),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([
+        'data: {"type":"TIMEOUT"}\n\n',
+      ]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -372,15 +344,13 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("fires onError when stream errors unexpectedly without a terminal event", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeErrorStream(
-          ['data: {"type":"QUEUE_UPDATE","position":1,"top5":[],"queueLength":1}\n\n'],
-          new Error("Connection lost"),
-        ),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeErrorStream(
+        ['data: {"type":"QUEUE_UPDATE","position":1,"top5":[],"queueLength":1}\n\n'],
+        new Error("Connection lost"),
+      ),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -398,15 +368,13 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("does not fire onError when stream errors after MATCH_FOUND", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeErrorStream(
-          ['data: {"type":"MATCH_FOUND","peer":"x@y.com"}\n\n'],
-          new Error("Connection reset"),
-        ),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeErrorStream(
+        ['data: {"type":"MATCH_FOUND","peer":"x@y.com","matchedAt":1700000000000}\n\n'],
+        new Error("Connection reset"),
+      ),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -425,12 +393,10 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("wraps non-Error stream exceptions in Error", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeErrorStream([], new Error("boom")),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeErrorStream([], new Error("boom")),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -447,15 +413,13 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("skips malformed JSON in SSE data", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: NOT_JSON\n\n' +
-          'data: {"type":"TIMEOUT"}\n\n',
-        ]),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([
+        'data: NOT_JSON\n\n' +
+        'data: {"type":"TIMEOUT"}\n\n',
+      ]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -473,12 +437,10 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("sends correct request headers and body", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([]),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -490,10 +452,10 @@ describe("connectToMatchingQueue", () => {
     connectToMatchingQueue("Graphs", "Hard", "my-jwt", callbacks);
 
     await vi.waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
-    const [url, opts] = fetchSpy.mock.calls[1];
+    const [url, opts] = fetchSpy.mock.calls[0];
     expect(url).toContain("/api/v1/queue/join");
     expect(opts.method).toBe("POST");
     expect(opts.headers).toMatchObject({
@@ -516,15 +478,13 @@ describe("connectToMatchingQueue", () => {
   });
 
   it("handles multiple QUEUE_UPDATE events across chunks", async () => {
-    fetchSpy
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: {"type":"QUEUE_UPDATE","position":3,"top5":["a","b","c"],"queueLength":10}\n\n',
-          'data: {"type":"QUEUE_UPDATE","position":1,"top5":["a"],"queueLength":8}\n\n',
-        ]),
-      });
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      body: makeStream([
+        'data: {"type":"QUEUE_UPDATE","position":3,"top5":["a","b","c"],"queueLength":10}\n\n',
+        'data: {"type":"QUEUE_UPDATE","position":1,"top5":["a"],"queueLength":8}\n\n',
+      ]),
+    });
 
     const callbacks = {
       onQueueUpdate: vi.fn(),
@@ -540,31 +500,6 @@ describe("connectToMatchingQueue", () => {
     });
     expect(callbacks.onQueueUpdate).toHaveBeenNthCalledWith(1, 3, 10);
     expect(callbacks.onQueueUpdate).toHaveBeenNthCalledWith(2, 1, 8);
-  });
-
-  it("handles leaveQueue failure before connecting gracefully", async () => {
-    fetchSpy
-      .mockRejectedValueOnce(new Error("leave failed")) // leaveQueue fails
-      .mockResolvedValueOnce({
-        ok: true,
-        body: makeStream([
-          'data: {"type":"TIMEOUT"}\n\n',
-        ]),
-      });
-
-    const callbacks = {
-      onQueueUpdate: vi.fn(),
-      onMatchFound: vi.fn(),
-      onTimeout: vi.fn(),
-      onError: vi.fn(),
-    };
-
-    connectToMatchingQueue("Arrays", "Easy", token, callbacks);
-
-    await vi.waitFor(() => {
-      expect(callbacks.onTimeout).toHaveBeenCalled();
-    });
-    expect(callbacks.onError).not.toHaveBeenCalled();
   });
 });
 

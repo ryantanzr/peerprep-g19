@@ -16,7 +16,7 @@ from httpx import AsyncClient, ASGITransport
 from pymongo.errors import PyMongoError
 from bson import ObjectId
 
-from main import app
+from main import app, get_current_admin, get_current_user
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +24,21 @@ from main import app
 # ---------------------------------------------------------------------------
 
 VALID_ID = "507f1f77bcf86cd799439011"
+
+
+@pytest.fixture(autouse=True)
+def override_firebase_auth():
+    """Bypass Firebase auth for all tests."""
+    async def mock_admin():
+        return "test@admin.com"
+
+    async def mock_user():
+        return "test@user.com"
+
+    app.dependency_overrides[get_current_admin] = mock_admin
+    app.dependency_overrides[get_current_user] = mock_user
+    yield
+    app.dependency_overrides.clear()
 
 @pytest.fixture
 def create_payload():
@@ -192,10 +207,8 @@ class TestUpdate:
         """find_one_and_update returns None but the doc exists → version mismatch."""
         existing_doc = {"_id": ObjectId(VALID_ID), "title": "Two Sum", "version": 5}
         with patch("main.questions_col") as mock_col:
-            mock_col.find_one = AsyncMock(return_value=None)          # no title conflict
-            mock_col.find_one_and_update = AsyncMock(return_value=None)
-            # second find_one call (inside the None-check branch) returns the doc
             mock_col.find_one = AsyncMock(side_effect=[None, existing_doc])
+            mock_col.find_one_and_update = AsyncMock(return_value=None)
             response = await client.put(f"/update/{VALID_ID}", json=update_payload, headers=auth_headers)
 
         assert response.status_code == 409
@@ -630,9 +643,12 @@ class TestGetQuestionById:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_returns_400_for_invalid_id_format(self, client):
-        response = await client.get("/questions/not-a-valid-objectid")
-        assert response.status_code == 400
+    async def test_falls_back_to_title_lookup_for_non_objectid(self, client):
+        """Non-ObjectId strings are treated as titles and looked up by title field."""
+        with patch("main.questions_col") as mock_col:
+            mock_col.find_one = AsyncMock(return_value=None)
+            response = await client.get("/questions/not-a-valid-objectid")
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_converts_objectid_to_string(self, client):

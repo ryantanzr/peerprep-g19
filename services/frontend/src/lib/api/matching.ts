@@ -1,11 +1,11 @@
 import type { MatchingSSEEvent } from "@/types/matching";
 
 const MATCHING_SERVICE_URL =
-  process.env.NEXT_PUBLIC_MATCHING_SERVICE_URL || "http://localhost:3002";
+  process.env.NEXT_PUBLIC_MATCH_SERVICE_URL || "http://localhost:3002";
 
 export interface MatchingCallbacks {
   onQueueUpdate: (position: number, queueLength: number) => void;
-  onMatchFound: (peerEmail: string) => void;
+  onMatchFound: (peerEmail: string, matchedAt: number) => void;
   onTimeout: () => void;
   onError: (error: Error) => void;
 }
@@ -33,7 +33,6 @@ export function parseSSEChunk(raw: string): { events: string[]; remainder: strin
 
 /**
  * Connect to the matching service SSE stream.
- * Calls leaveQueue first to handle stale queue entries.
  * Returns an AbortController to cancel the connection.
  */
 export function connectToMatchingQueue(
@@ -48,13 +47,16 @@ export function connectToMatchingQueue(
   (async () => {
     let response: Response;
     try {
-      response = await fetch(`${MATCHING_SERVICE_URL}/api/v1/queue/join`, {
-        method: "POST",
+      // New match service uses GET endpoint with query parameters
+      const url = new URL(`${MATCHING_SERVICE_URL}/queue/join`);
+      url.searchParams.set("topic", topic);
+      url.searchParams.set("difficulty", difficulty.toLowerCase());
+      
+      response = await fetch(url.toString(), {
+        method: "GET",
         headers: {
-          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ topic, difficulty }),
         signal: controller.signal,
       });
     } catch (err: unknown) {
@@ -97,7 +99,7 @@ export function connectToMatchingQueue(
                 break;
               case "MATCH_FOUND":
                 eventHandled = true;
-                callbacks.onMatchFound(event.peer);
+                callbacks.onMatchFound(event.peer, event.matchedAt);
                 break;
               case "TIMEOUT":
                 eventHandled = true;
@@ -126,7 +128,7 @@ export function connectToMatchingQueue(
  * already cleaned up via the SSE connection close event.
  */
 export async function leaveQueue(token: string): Promise<void> {
-  await fetch(`${MATCHING_SERVICE_URL}/api/v1/queue/leave`, {
+  await fetch(`${MATCHING_SERVICE_URL}/queue/leave`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

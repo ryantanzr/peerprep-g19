@@ -4,17 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npx partykit dev",
-    "deploy": "npx partykit deploy",
+    "build": "tsc",
+    "start": "node dist/ws-server.js",
+    "dev": "tsx src/ws-server.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "y-partykit": "^0.0.33",
+    "jose": "^6.0.11",
+    "lib0": "^0.2.99",
+    "ws": "^8.18.0",
+    "y-protocols": "^1.0.6",
     "yjs": "^13.6.29"
   },
   "devDependencies": {
-    "partykit": "^0.0.111",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
     "typescript": "^5.4.0",
     "vitest": "^3.2.0"
   }

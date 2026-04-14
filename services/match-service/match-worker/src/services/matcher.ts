@@ -41,9 +41,10 @@ export async function publishMatch(
   difficulty: string
 ) {
   const channel = queueUpdateChannel(topic, difficulty);
+  const matchedAt = Date.now();
   await Promise.all([
-    redis.publish(`match:${user1}`, JSON.stringify({ peer: user2 })),
-    redis.publish(`match:${user2}`, JSON.stringify({ peer: user1 })),
+    redis.publish(`match:${user1}`, JSON.stringify({ peer: user2, matchedAt })),
+    redis.publish(`match:${user2}`, JSON.stringify({ peer: user1, matchedAt })),
     redis.publish(channel, JSON.stringify({ topic, difficulty })),
     redis.del(userMetaKey(user1)),
     redis.del(userMetaKey(user2)),

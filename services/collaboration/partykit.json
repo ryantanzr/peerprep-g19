@@ -1,5 +1,0 @@
-{
-  "name": "peerprep-collab",
-  "main": "src/server.ts",
-  "port": 1999
-}

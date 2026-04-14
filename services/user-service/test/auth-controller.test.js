@@ -128,7 +128,7 @@ describe("auth-controller Firebase flow", () => {
     expect(generatePasswordResetLinkMock).not.toHaveBeenCalled();
   });
 
-  it("handleForgotPassword returns reset link when email exists", async () => {
+  it("handleForgotPassword returns success without leaking reset link", async () => {
     getUserByEmailMock.mockResolvedValueOnce({ uid: "firebase-uid-1" });
     generatePasswordResetLinkMock.mockResolvedValueOnce(
       "https://example.com/reset-link"
@@ -139,11 +139,10 @@ describe("auth-controller Firebase flow", () => {
 
     await handleForgotPassword(req, res);
 
-    expect(getUserByEmailMock).toHaveBeenCalledWith("user@example.com");
     expect(generatePasswordResetLinkMock).toHaveBeenCalledWith("user@example.com");
     expect(res.statusCode).toBe(200);
-    expect(res.body.message).toBe("Password reset link generated");
-    expect(res.body.data.resetLink).toBe("https://example.com/reset-link");
+    expect(res.body.message).toBe("If an account with this email exists, a password reset email has been sent");
+    expect(res.body.data).toBeUndefined();
   });
 
   it("handleForgotPassword returns generic success when user is not found", async () => {
@@ -156,10 +155,10 @@ describe("auth-controller Firebase flow", () => {
 
     await handleForgotPassword(req, res);
 
-    expect(generatePasswordResetLinkMock).not.toHaveBeenCalled();
+    expect(generatePasswordResetLinkMock).toHaveBeenCalled();
     expect(res.statusCode).toBe(200);
     expect(res.body.message).toBe(
-      "If an account with this email exists, a reset link will be generated"
+      "If an account with this email exists, a password reset email has been sent"
     );
   });
 });
