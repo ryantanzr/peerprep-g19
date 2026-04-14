@@ -26,6 +26,7 @@ services:
       retries: 5
 
   user-service:
+    image: ${GHCR_NAMESPACE}/user-service:${IMAGE_TAG:-latest}
     build:
       context: ./services/user-service
       dockerfile: Dockerfile
@@ -54,6 +55,7 @@ services:
       start_period: 10s
 
   question-service:
+    image: ${GHCR_NAMESPACE}/question-service:${IMAGE_TAG:-latest}
     build:
       context: ./services/question-service
       dockerfile: Dockerfile
@@ -85,6 +87,7 @@ services:
       start_period: 10s
 
   match-queue-service:
+    image: ${GHCR_NAMESPACE}/match-queue-service:${IMAGE_TAG:-latest}
     build:
       context: ./services/match-service/queue-service
       dockerfile: dockerfile
@@ -111,6 +114,7 @@ services:
       retries: 3
 
   match-worker:
+    image: ${GHCR_NAMESPACE}/match-worker:${IMAGE_TAG:-latest}
     build:
       context: ./services/match-service/match-worker
       dockerfile: dockerfile
@@ -128,6 +132,7 @@ services:
       replicas: 2
 
   collaboration:
+    image: ${GHCR_NAMESPACE}/collaboration:${IMAGE_TAG:-latest}
     build:
       context: ./services/collaboration
       dockerfile: Dockerfile
@@ -140,6 +145,7 @@ services:
     restart: unless-stopped
 
   ai-service:
+    image: ${GHCR_NAMESPACE}/ai-service:${IMAGE_TAG:-latest}
     build:
       context: ./services/ai-service
       dockerfile: Dockerfile
@@ -159,6 +165,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: ${GHCR_NAMESPACE}/frontend:${IMAGE_TAG:-latest}
     build:
       context: ./services/frontend
       dockerfile: Dockerfile
