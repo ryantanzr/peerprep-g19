@@ -59,84 +59,84 @@ jobs:
           pnpm install --no-frozen-lockfile
           pnpm test --if-present
 
-  build-and-push:
-    needs: [test-python, test-node]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    runs-on: ubuntu-latest
+  # build-and-push:
+  #   needs: [test-python, test-node]
+  #   if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+  #   runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      packages: write
+  #   permissions:
+  #     contents: read
+  #     packages: write
 
-    steps:
-      - uses: actions/checkout@v4
+  #   steps:
+  #     - uses: actions/checkout@v4
 
-      # Recreate the Firebase service key from your secrets for the build context
-      - name: Create Firebase Service Key File
-        run: |
-          mkdir -p services/user-service/config
-          echo '${{ secrets.FIREBASE_SERVICE_KEY }}' > services/user-service/config/service_key.json
+  #     # Recreate the Firebase service key from your secrets for the build context
+  #     - name: Create Firebase Service Key File
+  #       run: |
+  #         mkdir -p services/user-service/config
+  #         echo '${{ secrets.FIREBASE_SERVICE_KEY }}' > services/user-service/config/service_key.json
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+  #     - name: Set up Docker Buildx
+  #       uses: docker/setup-buildx-action@v3
 
-      # Login to GitHub Container Registry using the built-in GITHUB_TOKEN
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+  #     # Login to GitHub Container Registry using the built-in GITHUB_TOKEN
+  #     - name: Login to GitHub Container Registry
+  #       uses: docker/login-action@v3
+  #       with:
+  #         registry: ghcr.io
+  #         username: ${{ github.actor }}
+  #         password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Derive the lowercase GHCR namespace and two tags:
-      #   - the short commit SHA  (e.g. ghcr.io/org/repo/frontend:abc1234)
-      #   - "latest"              (e.g. ghcr.io/org/repo/frontend:latest)
-      - name: Set image metadata
-        id: meta
-        run: |
-          NAMESPACE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          SHA_TAG="${{ github.sha }}"
-          echo "GHCR_NAMESPACE=${NAMESPACE}" >> $GITHUB_ENV
-          echo "IMAGE_TAG=${SHA_TAG}" >> $GITHUB_ENV
+  #     # Derive the lowercase GHCR namespace and two tags:
+  #     #   - the short commit SHA  (e.g. ghcr.io/org/repo/frontend:abc1234)
+  #     #   - "latest"              (e.g. ghcr.io/org/repo/frontend:latest)
+  #     - name: Set image metadata
+  #       id: meta
+  #       run: |
+  #         NAMESPACE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+  #         SHA_TAG="${{ github.sha }}"
+  #         echo "GHCR_NAMESPACE=${NAMESPACE}" >> $GITHUB_ENV
+  #         echo "IMAGE_TAG=${SHA_TAG}" >> $GITHUB_ENV
 
-      - name: Build all service images
-        run: docker compose build
-        env:
-          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-          # Only frontend consumes these via build args — all other vars are runtime-only
-          FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
-          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
-          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
-          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ vars.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
-          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
-          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
+  #     - name: Build all service images
+  #       run: docker compose build
+  #       env:
+  #         GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
+  #         IMAGE_TAG: ${{ env.IMAGE_TAG }}
+  #         # Only frontend consumes these via build args — all other vars are runtime-only
+  #         FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+  #         NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+  #         NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+  #         NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ vars.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+  #         NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+  #         NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
 
-      # Push the SHA-tagged images
-      - name: Push SHA-tagged images
-        run: docker compose push
-        env:
-          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+  #     # Push the SHA-tagged images
+  #     - name: Push SHA-tagged images
+  #       run: docker compose push
+  #       env:
+  #         GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
+  #         IMAGE_TAG: ${{ env.IMAGE_TAG }}
 
-      # Re-tag every service image as :latest and push
-      - name: Tag and push :latest
-        run: |
-          SERVICES=(
-            user-service
-            question-service
-            match-queue-service
-            match-worker
-            collaboration
-            ai-service
-            frontend
-          )
-          for SERVICE in "${SERVICES[@]}"; do
-            docker tag \
-              "${GHCR_NAMESPACE}/${SERVICE}:${IMAGE_TAG}" \
-              "${GHCR_NAMESPACE}/${SERVICE}:latest"
-            docker push "${GHCR_NAMESPACE}/${SERVICE}:latest"
-          done
-        env:
-          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+  #     # Re-tag every service image as :latest and push
+  #     - name: Tag and push :latest
+  #       run: |
+  #         SERVICES=(
+  #           user-service
+  #           question-service
+  #           match-queue-service
+  #           match-worker
+  #           collaboration
+  #           ai-service
+  #           frontend
+  #         )
+  #         for SERVICE in "${SERVICES[@]}"; do
+  #           docker tag \
+  #             "${GHCR_NAMESPACE}/${SERVICE}:${IMAGE_TAG}" \
+  #             "${GHCR_NAMESPACE}/${SERVICE}:latest"
+  #           docker push "${GHCR_NAMESPACE}/${SERVICE}:latest"
+  #         done
+  #       env:
+  #         GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
+  #         IMAGE_TAG: ${{ env.IMAGE_TAG }}
