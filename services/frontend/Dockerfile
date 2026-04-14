@@ -44,8 +44,6 @@ FROM node:20-alpine AS runtime
 
 WORKDIR /app
 
-RUN npm install -g pnpm
-
 # Copy standalone server (includes all needed node_modules)
 COPY --from=builder /app/.next/standalone ./
 # Copy static assets
@@ -58,4 +56,4 @@ RUN chmod +x ./env-config.sh
 EXPOSE 3000
 
 # Standalone server reads PORT env var, defaults to 3000
-CMD ["/bin/sh", "-c", "./env-config.sh && pnpm start"]
+CMD ["/bin/sh", "-c", "./env-config.sh && node server.js"]

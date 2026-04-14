@@ -1,7 +1,11 @@
-.PHONY: start-all stop-all
+.PHONY: start pull stop
 
-start-all:
+start:
+	docker compose build --no-cache
 	docker compose up
 
-stop-all:
+pull:
+	docker compose pull
+
+stop:
 	docker compose down
