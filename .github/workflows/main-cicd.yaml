@@ -58,6 +58,58 @@ jobs:
           cd services/${{ matrix.service }}
           pnpm install --no-frozen-lockfile
           pnpm test --if-present
+  
+  build-and-validate:
+    needs: [test-python, test-node]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. VALIDATION: Check Compose Syntax and Variable Mapping
+      - name: Validate Docker Compose Configuration
+        run: docker compose config -q
+        env:
+          GHCR_NAMESPACE: "ghcr.io/${{ github.repository }}"
+          IMAGE_TAG: ${{ github.sha }}
+          # Providing dummy values to ensure the YAML substitution logic works
+          NEXT_PUBLIC_FIREBASE_API_KEY: "validation-only"
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: "validation-only"
+          #
+
+      # 2. SECURITY: Audit Node Dependencies (Frontend & User-Service)
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Audit Frontend Dependencies
+        run: |
+          cd services/frontend
+          pnpm install --no-frozen-lockfile
+          pnpm audit --audit-level high
+        #
+
+      - name: Audit User-Service Dependencies
+        run: |
+          cd services/user-service
+          pnpm install --no-frozen-lockfile
+          pnpm audit --audit-level high
+        #
+
+      # 2. SECURITY: Audit Python Dependencies (Question-Service)
+      - name: Setup Python for Audit
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Audit Python Security
+        run: |
+          pip install safety
+          safety check -r services/question-service/requirements.txt
+        #
 
   # build-and-push:
   #   needs: [test-python, test-node]
