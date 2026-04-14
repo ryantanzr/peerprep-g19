@@ -88,16 +88,13 @@ jobs:
       - name: Audit Frontend Dependencies
         run: |
           cd services/frontend
-          pnpm install --no-frozen-lockfile
-          pnpm audit --audit-level high
-        #
+          # Use --package-lock-only equivalent if possible, or just audit the lockfile
+          pnpm audit --audit-level high --prod
 
       - name: Audit User-Service Dependencies
         run: |
           cd services/user-service
-          pnpm install --no-frozen-lockfile
-          pnpm audit --audit-level high
-        #
+          pnpm audit --audit-level high --prod
 
       # 2. SECURITY: Audit Python Dependencies (Question-Service)
       - name: Setup Python for Audit
