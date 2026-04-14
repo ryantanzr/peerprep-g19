@@ -7,6 +7,7 @@ RUN npm install -g pnpm
 
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
+COPY env-config.sh ./
 
 COPY . .
 
@@ -43,13 +44,18 @@ FROM node:20-alpine AS runtime
 
 WORKDIR /app
 
+RUN npm install -g pnpm
+
 # Copy standalone server (includes all needed node_modules)
 COPY --from=builder /app/.next/standalone ./
 # Copy static assets
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/env-config.sh ./env-config.sh
+
+RUN chmod +x ./env-config.sh
 
 EXPOSE 3000
 
 # Standalone server reads PORT env var, defaults to 3000
-CMD ["node", "server.js"]
+CMD ["/bin/sh", "-c", "./env-config.sh && pnpm start"]
